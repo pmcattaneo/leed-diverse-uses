@@ -16,6 +16,7 @@ class Destination:
     address: str
     lat: float
     lon: float
+    category: str = "Non-specified"
     distance_m: Optional[float] = None
     duration_s: Optional[float] = None
     compliant: Optional[bool] = None
