@@ -4,6 +4,7 @@ A small Python application that helps evaluate LEED v4/v4.1 **Diverse Uses** cre
 
 ## Features
 
+- **Interactive origin point selection** — Click on an OSM map to select your starting point
 - Uses OpenStreetMap (via OpenRouteService) to calculate walking directions.
 - Calculates compliance based on configured walking distance thresholds.
 - Builds interactive Folium maps for each origin-destination path.

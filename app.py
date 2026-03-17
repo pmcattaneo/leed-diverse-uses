@@ -1,8 +1,9 @@
 import os
 from pathlib import Path
 
+import folium
 import streamlit as st
-from streamlit.components.v1 import html
+from streamlit_folium import st_folium
 
 from leed_diverse_uses.core import RouteAnalyzer
 from leed_diverse_uses.pdf_report import ReportGenerator
@@ -14,8 +15,8 @@ st.title("LEED Diverse Uses — Walking Routes")
 
 st.markdown(
     """
-Provide an origin point and a list of destinations. The app will compute walking routes using OpenRouteService
-and evaluate whether each destination is compliant with the specified walking-distance threshold.
+Click on the map below to select your origin point, then provide a list of destinations.
+The app will compute walking routes using OpenRouteService and evaluate compliance.
 """
 )
 
@@ -23,14 +24,45 @@ ors_key = os.environ.get("ORS_API_KEY")
 if not ors_key:
     st.warning("Set the ORS_API_KEY environment variable to use routing features.")
 
-origin = st.text_input("Origin (lat,lon)", "40.748817,-73.985428")
+# Initialize session state for origin and previous locations
+if "origin_lat" not in st.session_state:
+    st.session_state.origin_lat = 40.748817
+if "origin_lon" not in st.session_state:
+    st.session_state.origin_lon = -73.985428
+
+st.subheader("Step 1: Select Origin Point")
+st.info("Click on the map to set your origin point (a marker will appear where you click).")
+
+# Create interactive map
+m = folium.Map(
+    location=[st.session_state.origin_lat, st.session_state.origin_lon],
+    zoom_start=13,
+    tiles="OpenStreetMap",
+)
+
+# Add current origin marker
+folium.Marker(
+    location=[st.session_state.origin_lat, st.session_state.origin_lon],
+    popup="Origin (click to change)",
+    icon=folium.Icon(color="blue", icon="home"),
+).add_to(m)
+
+# Capture map clicks
+map_data = st_folium(m, width=700, height=500)
+
+# Update origin if user clicked on the map
+if map_data and map_data.get("last_clicked"):
+    st.session_state.origin_lat = map_data["last_clicked"]["lat"]
+    st.session_state.origin_lon = map_data["last_clicked"]["lng"]
+    st.success(f"✓ Origin set to: {st.session_state.origin_lat:.6f}, {st.session_state.origin_lon:.6f}")
+
+st.markdown("---")
+
 max_distance = st.number_input(
     "Max walking distance (meters)", min_value=100.0, value=804.67, step=10.0
 )
 
-st.markdown("---")
-
-st.subheader("Destinations")
+st.subheader("Step 2: Enter Destinations")
 
 dest_text = st.text_area(
     "Enter one destination per line in the format `Name | Address` (or just an address).",
@@ -43,12 +75,7 @@ if st.button("Analyze Routes"):
         st.error("ORS_API_KEY is required to compute routes.")
         st.stop()
 
-    try:
-        lat_str, lon_str = origin.split(",")
-        origin_coord = (float(lat_str.strip()), float(lon_str.strip()))
-    except Exception:
-        st.error("Origin must be in the format: lat,lon")
-        st.stop()
+    origin_coord = (st.session_state.origin_lat, st.session_state.origin_lon)
 
     dest_lines = [l.strip() for l in dest_text.splitlines() if l.strip()]
     destinations = []
@@ -73,8 +100,7 @@ if st.button("Analyze Routes"):
         col.markdown(f"**Distance:** {dest.distance_m:.0f} m / **Time:** {dest.duration_s/60:.1f} min")
 
         m = analyzer.make_route_map(dest)
-        map_html = m._repr_html_()
-        html(map_html, height=350)
+        st_folium(m, width=350, height=300)
 
     if st.button("Generate PDF Report"):
         output_path = Path.cwd() / "leed_diverse_uses_report.pdf"
