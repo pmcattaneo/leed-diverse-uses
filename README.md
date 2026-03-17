@@ -43,3 +43,4 @@ python -m leed_diverse_uses.cli \
 
 - This is a starting point; you can extend compliance rules to match the exact LEED criteria for verbiage and scoring.
 - The project is designed to be self-contained and use OpenStreetMap for routing and map rendering.
+# leed-diverse-uses
