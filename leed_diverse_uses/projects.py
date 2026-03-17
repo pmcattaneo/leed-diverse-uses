@@ -118,22 +118,28 @@ class ProjectManager:
             del data[project_id]
             self._save_projects_data(data)
 
-    def add_destination(self, project_id: str, destination: Destination) -> None:
-        """Add a destination to a project."""
+    def add_destination(self, project_id: str, destination) -> None:
+        """Add a destination to a project. Accepts Destination object or dict."""
         project = self.get_project(project_id)
         if not project:
             return
         
-        dest_dict = {
-            "name": destination.name,
-            "address": destination.address,
-            "lat": destination.lat,
-            "lon": destination.lon,
-            "category": destination.category,
-            "distance_m": destination.distance_m,
-            "duration_s": destination.duration_s,
-            "compliant": destination.compliant,
-        }
+        # Handle both Destination objects and dictionaries
+        if isinstance(destination, Destination):
+            dest_dict = {
+                "name": destination.name,
+                "address": destination.address,
+                "lat": destination.lat,
+                "lon": destination.lon,
+                "category": destination.category,
+                "distance_m": destination.distance_m,
+                "duration_s": destination.duration_s,
+                "compliant": destination.compliant,
+            }
+        elif isinstance(destination, dict):
+            dest_dict = destination
+        else:
+            raise TypeError(f"destination must be Destination or dict, got {type(destination)}")
         
         project.destinations.append(dest_dict)
         self.update_project(project)
