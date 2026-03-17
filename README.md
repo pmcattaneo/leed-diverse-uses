@@ -6,7 +6,7 @@ A comprehensive Python application for evaluating LEED v4/v4.1 **Diverse Uses** 
 
 - **Interactive origin point selection** — Click on an OSM map to select your starting point
 - **Add multiple destinations** — Button-driven interface with name, address, and category selection
-- **Uses OpenStreetMap** (via OpenRouteService) to calculate walking directions
+- **Uses OpenStreetMap** (via Valhalla's free public API) to calculate walking directions
 - **Calculates compliance** based on configured walking distance thresholds
 - **Tabbed interface** with 4 views:
   - **Addresses**: Display destinations in a table with distances, times, and compliance status
@@ -21,8 +21,8 @@ A comprehensive Python application for evaluating LEED v4/v4.1 **Diverse Uses** 
 
 ### Requirements
 
-- Python 3.10+ (recommended)
-- An OpenRouteService API key (set as `ORS_API_KEY` environment variable)
+- Python 3.9+ (recommended)
+- No additional API keys required (uses Valhalla's free public API)
 
 ### Install dependencies
 
@@ -33,11 +33,10 @@ python -m pip install -r requirements.txt
 ### Run the Streamlit app
 
 ```sh
-export ORS_API_KEY="your_openrouteservice_api_key"
 python -m streamlit run app.py
 ```
 
-The app will open in your browser at `http://localhost:8501`.
+The app will open in your browser at `http://localhost:8501`. No API key setup needed!
 
 ### App Workflow
 
@@ -55,6 +54,8 @@ The app will open in your browser at `http://localhost:8501`.
 
 ## Notes
 
-- This is a starting point; you can extend compliance rules to match the exact LEED criteria for verbiage and scoring.
-- The project is designed to be self-contained and use OpenStreetMap for routing and map rendering.
+- **No API key required** — Uses Valhalla's free public API instance (https://valhalla1.openstreetmap.de)
+- The pedestrian routing profile is used for accurate walking distances
+- This is a starting point; you can extend compliance rules to match the exact LEED criteria for verbiage and scoring
+- The project is designed to be self-contained and use OpenStreetMap for routing and map rendering
 # leed-diverse-uses

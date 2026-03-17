@@ -5,9 +5,8 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import folium
-import openrouteservice
+import requests
 from geopy.geocoders import Nominatim
-from openrouteservice import Client
 
 
 @dataclass
@@ -24,15 +23,11 @@ class Destination:
 
 
 class RouteAnalyzer:
-    """Analyzes walking routes from an origin point to destination addresses."""
+    """Analyzes walking routes from an origin point to destination addresses using Valhalla API."""
 
-    def __init__(self, origin: Tuple[float, float], ors_api_key: Optional[str] = None):
+    def __init__(self, origin: Tuple[float, float], valhalla_url: str = "https://valhalla1.openstreetmap.de"):
         self.origin = origin
-        self.ors_api_key = ors_api_key or os.environ.get("ORS_API_KEY")
-        if not self.ors_api_key:
-            raise RuntimeError("OpenRouteService API key required (set ORS_API_KEY)")
-
-        self.client = Client(key=self.ors_api_key)
+        self.valhalla_url = valhalla_url
         self.geolocator = Nominatim(user_agent="leed-diverse-uses")
 
     def geocode(self, address: str) -> Tuple[float, float]:
@@ -82,24 +77,40 @@ class RouteAnalyzer:
         return results
 
     def _get_walking_route(self, origin: Tuple[float, float], destination: Tuple[float, float]):
-        """Request walking directions from OpenRouteService."""
-        coords = [(origin[1], origin[0]), (destination[1], destination[0])]
-        resp = self.client.directions(
-            coordinates=coords,
-            profile="foot-walking",
-            format_="geojson",
-            instructions=False,
-            optimize_waypoints=False,
+        """Request walking directions from Valhalla public API."""
+        # Valhalla expects lon,lat format
+        req_payload = {
+            "locations": [
+                {"lat": origin[0], "lon": origin[1]},
+                {"lat": destination[0], "lon": destination[1]},
+            ],
+            "costing": "pedestrian",
+            "format": "geojson",
+        }
+        
+        resp = requests.post(
+            f"{self.valhalla_url}/route",
+            json=req_payload,
+            timeout=30
         )
-        # openrouteservice returns a FeatureCollection; the first feature contains properties
-        feature = resp["features"][0]
+        resp.raise_for_status()
+        
+        data = resp.json()
+        
+        # Extract geometry from GeoJSON feature
+        feature = data["features"][0]
         props = feature["properties"]
         geometry = feature["geometry"]["coordinates"]
+        
         # Convert geometry to (lat, lon) pairs
         latlon = [(lat, lon) for lon, lat in geometry]
-        return {"distance": props.get("summary", {}).get("distance"),
-                "duration": props.get("summary", {}).get("duration"),
-                "geometry": latlon}
+        
+        # Valhalla returns duration in seconds and distance in meters
+        return {
+            "distance": props.get("length"),
+            "duration": props.get("time"),
+            "geometry": latlon
+        }
 
     def make_route_map(self, destination: Destination, zoom_start: int = 15) -> folium.Map:
         """Create a Folium map showing the route from origin to destination."""

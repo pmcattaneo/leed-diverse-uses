@@ -1,8 +1,8 @@
 streamlit
 streamlit-folium
-openrouteservice
 folium
 geopy
 pandas
 reportlab
 staticmap
+requests
