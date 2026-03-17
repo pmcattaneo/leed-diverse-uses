@@ -78,39 +78,117 @@ class RouteAnalyzer:
 
     def _get_walking_route(self, origin: Tuple[float, float], destination: Tuple[float, float]):
         """Request walking directions from Valhalla public API."""
-        # Valhalla expects lon,lat format
+        # Valhalla expects lon,lat format in locations but returns lat,lon in geometry
         req_payload = {
             "locations": [
                 {"lat": origin[0], "lon": origin[1]},
                 {"lat": destination[0], "lon": destination[1]},
             ],
             "costing": "pedestrian",
-            "format": "geojson",
         }
         
-        resp = requests.post(
-            f"{self.valhalla_url}/route",
-            json=req_payload,
-            timeout=30
-        )
-        resp.raise_for_status()
+        try:
+            resp = requests.post(
+                f"{self.valhalla_url}/route",
+                json=req_payload,
+                timeout=30
+            )
+            resp.raise_for_status()
+            
+            data = resp.json()
+            
+            # Check for error responses
+            if "error" in data:
+                raise ValueError(f"Valhalla API error: {data.get('error')}")
+            
+            # Try native Valhalla format first (with "trip" key)
+            if "trip" in data:
+                trip = data["trip"]
+                
+                # Extract duration and distance from legs
+                total_distance = 0
+                total_duration = 0
+                all_coords = []
+                
+                for leg in trip.get("legs", []):
+                    total_distance += leg.get("summary", {}).get("length", 0)
+                    total_duration += leg.get("summary", {}).get("time", 0)
+                    
+                    # Extract coordinates from shape field (polyline6 encoded)
+                    shape = leg.get("shape", "")
+                    if shape:
+                        coords = self._decode_polyline6(shape)
+                        all_coords.extend(coords)
+                
+                if all_coords:
+                    return {
+                        "distance": total_distance * 1000,  # Convert km to meters
+                        "duration": total_duration,  # Already in seconds
+                        "geometry": all_coords
+                    }
+            
+            # Try GeoJSON format (fallback)
+            elif "features" in data and data["features"]:
+                feature = data["features"][0]
+                props = feature["properties"]
+                geometry = feature["geometry"]["coordinates"]
+                
+                # Convert geometry to (lat, lon) pairs
+                latlon = [(lat, lon) for lon, lat in geometry]
+                
+                return {
+                    "distance": props.get("length"),
+                    "duration": props.get("time"),
+                    "geometry": latlon
+                }
+            
+            raise ValueError("No route found in Valhalla response")
+            
+        except requests.exceptions.RequestException as e:
+            raise ValueError(f"Failed to connect to routing service at {self.valhalla_url}: {e}")
+        except (KeyError, IndexError, ValueError) as e:
+            raise ValueError(f"Error processing route response: {e}")
+
+    def _decode_polyline6(self, encoded: str) -> List[Tuple[float, float]]:
+        """Decode a polyline6 encoded string to lat,lon coordinates."""
+        # Polyline6 encoding: https://valhalla.readthedocs.io/en/latest/api/map-matching/output-options/
+        coords = []
+        index = 0
+        lat = 0
+        lng = 0
         
-        data = resp.json()
+        while index < len(encoded):
+            result = 0
+            shift = 0
+            
+            while True:
+                b = ord(encoded[index]) - 63
+                index += 1
+                result |= (b & 0x1f) << shift
+                shift += 5
+                if b < 0x20:
+                    break
+            
+            dlat = ~(result >> 1) if (result & 1) else (result >> 1)
+            lat += dlat
+            
+            result = 0
+            shift = 0
+            
+            while True:
+                b = ord(encoded[index]) - 63
+                index += 1
+                result |= (b & 0x1f) << shift
+                shift += 5
+                if b < 0x20:
+                    break
+            
+            dlng = ~(result >> 1) if (result & 1) else (result >> 1)
+            lng += dlng
+            
+            coords.append((lat / 1e6, lng / 1e6))
         
-        # Extract geometry from GeoJSON feature
-        feature = data["features"][0]
-        props = feature["properties"]
-        geometry = feature["geometry"]["coordinates"]
-        
-        # Convert geometry to (lat, lon) pairs
-        latlon = [(lat, lon) for lon, lat in geometry]
-        
-        # Valhalla returns duration in seconds and distance in meters
-        return {
-            "distance": props.get("length"),
-            "duration": props.get("time"),
-            "geometry": latlon
-        }
+        return coords
 
     def make_route_map(self, destination: Destination, zoom_start: int = 15) -> folium.Map:
         """Create a Folium map showing the route from origin to destination."""
