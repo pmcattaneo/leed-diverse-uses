@@ -23,56 +23,126 @@ project_manager = ProjectManager()
 
 # ============= DASHBOARD PAGE =============
 def page_dashboard():
-    col1, col2, col3 = st.columns([1, 2, 1])
+    # Header with logo and controls
+    col1, col2, col3 = st.columns([2, 2, 1])
+    
     with col1:
-        st.markdown("### 📋 LEED Docs")
+        st.markdown("""
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="font-size: 32px; font-weight: bold; color: #27AE60;">LEED Docs</div>
+            <div style="font-size: 12px; color: #666; font-weight: 500;">WALKING DISTANCE</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col3:
-        if st.button("➕ New Project", use_container_width=True, key="new_proj_btn"):
+        if st.button("➕ New Project", use_container_width=True):
             st.session_state.page = "create_project"
             st.rerun()
     
     st.markdown("---")
-    st.markdown("# Dashboard")
-    st.markdown("LEED Walking Distance Documentation")
+    
+    # Page title
+    st.markdown("""
+    <h1 style="margin-bottom: 10px;">Dashboard</h1>
+    <p style="color: #666; margin-top: -10px;">Track LEED Diverse Uses compliance across your projects</p>
+    """, unsafe_allow_html=True)
     
     # Statistics
     stats = project_manager.get_stats()
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4 = st.columns(4, gap="medium")
     
     with col1:
-        st.metric("Projects", stats["total_projects"])
+        with st.container(border=False):
+            st.markdown(f"""
+            <div style="text-align: center; padding: 20px;">
+                <div style="font-size: 36px; font-weight: bold; color: #27AE60;">{stats['total_projects']}</div>
+                <div style="color: #666; font-size: 14px; margin-top: 8px;">Projects</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
     with col2:
-        st.metric("Addresses Tracked", stats["total_addresses"])
+        with st.container(border=False):
+            st.markdown(f"""
+            <div style="text-align: center; padding: 20px;">
+                <div style="font-size: 36px; font-weight: bold; color: #2980B9;">{stats['total_addresses']}</div>
+                <div style="color: #666; font-size: 14px; margin-top: 8px;">Addresses Tracked</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
     with col3:
-        st.metric("Compliant", stats["total_compliant"])
+        with st.container(border=False):
+            st.markdown(f"""
+            <div style="text-align: center; padding: 20px;">
+                <div style="font-size: 36px; font-weight: bold; color: #27AE60;">{stats['total_compliant']}</div>
+                <div style="color: #666; font-size: 14px; margin-top: 8px;">Compliant</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
     with col4:
-        st.metric("Non-Compliant", stats["total_non_compliant"])
+        with st.container(border=False):
+            st.markdown(f"""
+            <div style="text-align: center; padding: 20px;">
+                <div style="font-size: 36px; font-weight: bold; color: #E74C3C;">{stats['total_non_compliant']}</div>
+                <div style="color: #666; font-size: 14px; margin-top: 8px;">Non-Compliant</div>
+            </div>
+            """, unsafe_allow_html=True)
     
     st.markdown("---")
-    st.markdown("## Recent Projects")
+    st.markdown("""
+    <h2 style="margin-bottom: 20px;">Recent Projects</h2>
+    """, unsafe_allow_html=True)
     
     projects = project_manager.list_projects()
     
     if not projects:
-        st.info("No projects yet. Click '➕ New Project' to get started.")
+        st.info("📌 No projects yet. Click '➕ New Project' to get started.")
     else:
-        cols = st.columns(2)
+        cols = st.columns(2, gap="large")
         for idx, project in enumerate(projects):
             col = cols[idx % 2]
             with col:
                 with st.container(border=True):
-                    col1, col2 = st.columns([3, 1])
-                    with col1:
-                        st.markdown(f"### {project.name}")
-                        st.markdown(f"*{project.address}*")
-                        st.markdown(f"{project.total_count} addresses • {project.compliant_count} compliant")
+                    # Project header with status
+                    col_name, col_status = st.columns([3, 1], gap="small")
+                    with col_name:
+                        st.markdown(f"""
+                        <div style="font-size: 18px; font-weight: bold; color: #222;">{project.name}</div>
+                        """, unsafe_allow_html=True)
                     
-                    with col2:
-                        status_color = {"Draft": "🔵", "In Progress": "🟡", "Approved": "🟢"}.get(project.status, "⚪")
-                        st.markdown(f"{status_color} **{project.status.lower()}**")
+                    with col_status:
+                        status_color = {"Draft": "#3498DB", "In Progress": "#F39C12", "Approved": "#27AE60"}.get(project.status, "#95A5A6")
+                        status_emoji = {"Draft": "🔵", "In Progress": "🟡", "Approved": "🟢"}.get(project.status, "⚪")
+                        st.markdown(f"""
+                        <div style="text-align: right; font-size: 12px; color: {status_color}; font-weight: bold;">
+                            {status_emoji} {project.status}
+                        </div>
+                        """, unsafe_allow_html=True)
                     
-                    if st.button("Open", key=f"proj_{project.project_id}", use_container_width=True):
+                    # Project address
+                    st.markdown(f"""
+                    <div style="color: #666; font-size: 13px; margin: 8px 0;">📍 {project.address}</div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Metrics
+                    metric_col1, metric_col2 = st.columns(2)
+                    with metric_col1:
+                        st.markdown(f"""
+                        <div style="font-size: 14px; color: #666;">
+                            <span style="font-weight: bold; color: #222;">{project.total_count}</span> addresses
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    with metric_col2:
+                        compliance_pct = (project.compliant_count / project.total_count * 100) if project.total_count > 0 else 0
+                        st.markdown(f"""
+                        <div style="font-size: 14px; color: #666;">
+                            <span style="font-weight: bold; color: #27AE60;">{project.compliant_count}</span> compliant
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # Open button
+                    st.markdown("")
+                    if st.button("→ Open Project", key=f"proj_{project.project_id}", use_container_width=True):
                         st.session_state.current_project_id = project.project_id
                         st.session_state.page = "project"
                         st.rerun()
@@ -81,28 +151,114 @@ def page_dashboard():
 def page_create_project():
     col1, col2 = st.columns([1, 5])
     with col1:
-        if st.button("← Dashboard"):
+        if st.button("← Dashboard", use_container_width=True):
             st.session_state.page = "dashboard"
             st.rerun()
     
     with col2:
-        st.markdown("## New Project")
+        st.markdown("""
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="font-size: 24px; font-weight: bold; color: #27AE60;">LEED Docs</div>
+            <div style="font-size: 12px; color: #666;">/ NEW PROJECT</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     st.markdown("---")
     
-    with st.form("create_project_form"):
-        col1, col2 = st.columns(2)
+    # Initialize session state for form (outside form to work with map)
+    if "create_project_name" not in st.session_state:
+        st.session_state.create_project_name = ""
+    if "create_project_address" not in st.session_state:
+        st.session_state.create_project_address = ""
+    if "create_form_lat" not in st.session_state:
+        st.session_state.create_form_lat = 40.748817
+    if "create_form_lon" not in st.session_state:
+        st.session_state.create_form_lon = -73.985428
+    if "geocode_attempted" not in st.session_state:
+        st.session_state.geocode_attempted = False
+    
+    # Project info section
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        project_name = st.text_input(
+            "Project Name*", 
+            value=st.session_state.create_project_name,
+            placeholder="e.g., VAHW Building",
+            key="proj_name_input"
+        )
+        st.session_state.create_project_name = project_name
         
-        with col1:
-            project_name = st.text_input("Project Name*", placeholder="e.g., VAHW Building")
-            project_address = st.text_input("Project Address*", placeholder="e.g., 950 Campbell Ave")
+        project_address = st.text_input(
+            "Project Address*", 
+            value=st.session_state.create_project_address,
+            placeholder="e.g., 950 Campbell Ave, New York, NY",
+            key="proj_address_input"
+        )
+        st.session_state.create_project_address = project_address
         
-        with col2:
-            origin_lat = st.number_input("Origin Latitude", value=40.748817, format="%.6f")
-            origin_lon = st.number_input("Origin Longitude", value=-73.985428, format="%.6f")
-        
-        if st.form_submit_button("Create Project", use_container_width=True):
-            if project_name and project_address:
+        # Geocode button
+        if st.button("📍 Locate Address", use_container_width=True):
+            if project_address:
+                try:
+                    analyzer = RouteAnalyzer(origin=(0, 0))
+                    lat, lon = analyzer.geocode(project_address)
+                    st.session_state.create_form_lat = lat
+                    st.session_state.create_form_lon = lon
+                    st.session_state.geocode_attempted = True
+                    st.success(f"✓ Found: {lat:.4f}, {lon:.4f}")
+                except Exception as e:
+                    st.error(f"Could not geocode: {e}")
+            else:
+                st.error("Enter an address first")
+    
+    with col2:
+        st.write("**Project Location**")
+        st.info("💡 Enter address above and click 'Locate Address', or click the map to set coordinates manually")
+        origin_lat = st.number_input(
+            "Latitude", 
+            value=st.session_state.create_form_lat, 
+            format="%.6f",
+            key="lat_input"
+        )
+        origin_lon = st.number_input(
+            "Longitude", 
+            value=st.session_state.create_form_lon, 
+            format="%.6f",
+            key="lon_input"
+        )
+    
+    st.markdown("---")
+    
+    # Interactive map to select location
+    st.markdown("**Click on the map to adjust the project origin point:**")
+    m = folium.Map(
+        location=[origin_lat, origin_lon],
+        zoom_start=14,
+        tiles="OpenStreetMap"
+    )
+    folium.Marker(
+        location=[origin_lat, origin_lon],
+        popup="Project Origin",
+        icon=folium.Icon(color="blue", icon="home"),
+    ).add_to(m)
+    
+    map_data = st_folium(m, width=700, height=400)
+    
+    # Handle map click
+    if map_data and map_data.get("last_clicked"):
+        origin_lat = map_data["last_clicked"]["lat"]
+        origin_lon = map_data["last_clicked"]["lng"]
+        st.session_state.create_form_lat = origin_lat
+        st.session_state.create_form_lon = origin_lon
+        st.rerun()
+    
+    st.markdown("---")
+    
+    # Submit button
+    if st.button("✅ Create Project", use_container_width=True, type="primary"):
+        if project_name and project_address:
+            try:
                 project = project_manager.create_project(
                     name=project_name,
                     address=project_address,
@@ -113,8 +269,10 @@ def page_create_project():
                 st.session_state.current_project_id = project.project_id
                 st.session_state.page = "project"
                 st.rerun()
-            else:
-                st.error("Project name and address are required")
+            except Exception as e:
+                st.error(f"Error creating project: {e}")
+        else:
+            st.error("Project name and address are required")
 
 # ============= PROJECT DETAIL PAGE =============
 def page_project():
@@ -123,15 +281,20 @@ def page_project():
         st.error("Project not found")
         return
     
-    # Header
-    col1, col2, col3 = st.columns([1, 4, 1])
+    # Header with back button
+    col1, col2 = st.columns([1, 5])
     with col1:
-        if st.button("← Dashboard"):
+        if st.button("← Dashboard", use_container_width=True):
             st.session_state.page = "dashboard"
             st.rerun()
     
     with col2:
-        st.markdown("## LEED Docs — WALKING DISTANCE")
+        st.markdown("""
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="font-size: 24px; font-weight: bold; color: #27AE60;">LEED Docs</div>
+            <div style="font-size: 12px; color: #666;">/ WALKING DISTANCE</div>
+        </div>
+        """, unsafe_allow_html=True)
     
     st.markdown("---")
     
