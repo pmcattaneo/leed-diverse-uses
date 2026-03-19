@@ -103,28 +103,16 @@ def repair_project_routes(project) -> bool:
     refreshed_destinations = []
 
     for dest_dict in project.destinations:
-        needs_refresh = (
-            not dest_dict.get("route_geometry")
-            or dest_dict.get("distance_m") is None
-            or dest_dict.get("duration_s") is None
-            or dest_dict.get("compliant") is None
-        )
-
-        if needs_refresh:
-            try:
-                refreshed = analyzer.analyze_destination_coords(
-                    name=dest_dict["name"],
-                    lat=dest_dict["lat"],
-                    lon=dest_dict["lon"],
-                    address=dest_dict.get("address"),
-                    category=dest_dict.get("category", ""),
-                    max_distance_m=project.max_distance_m,
-                )
-                refreshed_destinations.append(destination_to_dict(refreshed))
+        try:
+            refreshed = analyzer.enrich_destination(
+                destination_from_dict(dest_dict),
+                max_distance_m=project.max_distance_m,
+            )
+            refreshed_dict = destination_to_dict(refreshed)
+            refreshed_destinations.append(refreshed_dict)
+            if refreshed_dict != dest_dict:
                 updated = True
-            except Exception:
-                refreshed_destinations.append(dest_dict)
-        else:
+        except Exception:
             refreshed_destinations.append(dest_dict)
 
     if updated:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -95,7 +96,16 @@ class RouteAnalyzer:
         max_distance_m: float = 804.67,
     ) -> Destination:
         """Populate route details for an existing destination."""
-        if destination.route_geometry and destination.distance_m is not None and destination.duration_s is not None:
+        if (
+            destination.route_geometry
+            and destination.distance_m is not None
+            and destination.duration_s is not None
+            and self._geometry_matches_trip(
+                destination.route_geometry,
+                self.origin,
+                (destination.lat, destination.lon),
+            )
+        ):
             return destination
 
         return self.analyze_destination_coords(
@@ -128,6 +138,7 @@ class RouteAnalyzer:
                 {"lat": destination[0], "lon": destination[1]},
             ],
             "costing": "pedestrian",
+            "shape_format": "polyline6",
         }
         
         try:
@@ -160,7 +171,7 @@ class RouteAnalyzer:
                     # Extract coordinates from shape field (polyline6 encoded)
                     shape = leg.get("shape", "")
                     if shape:
-                        coords = self._decode_polyline6(shape)
+                        coords = self._decode_route_shape(shape, origin, destination)
                         all_coords.extend(coords)
                 
                 if all_coords:
@@ -192,13 +203,57 @@ class RouteAnalyzer:
         except (KeyError, IndexError, ValueError) as e:
             raise ValueError(f"Error processing route response: {e}")
 
-    def _decode_polyline6(self, encoded: str) -> List[Tuple[float, float]]:
-        """Decode a polyline6 encoded string to lat,lon coordinates."""
-        # Polyline6 encoding: https://valhalla.readthedocs.io/en/latest/api/map-matching/output-options/
+    def _decode_route_shape(
+        self,
+        encoded: str,
+        origin: Tuple[float, float],
+        destination: Tuple[float, float],
+    ) -> List[Tuple[float, float]]:
+        """Decode route geometry, falling back if the service uses polyline5."""
+        coords6 = self._decode_polyline(encoded, precision=6)
+        if self._geometry_matches_trip(coords6, origin, destination):
+            return coords6
+
+        coords5 = self._decode_polyline(encoded, precision=5)
+        if self._geometry_matches_trip(coords5, origin, destination):
+            return coords5
+
+        return coords6
+
+    def _geometry_matches_trip(
+        self,
+        geometry: Optional[List[Tuple[float, float]]],
+        origin: Tuple[float, float],
+        destination: Tuple[float, float],
+    ) -> bool:
+        """Check whether decoded geometry plausibly matches the requested trip."""
+        if not geometry:
+            return False
+
+        start = geometry[0]
+        end = geometry[-1]
+        origin_distance = self._point_distance_m(start, origin)
+        destination_distance = self._point_distance_m(end, destination)
+
+        return origin_distance <= 250 and destination_distance <= 250
+
+    @staticmethod
+    def _point_distance_m(point_a: Tuple[float, float], point_b: Tuple[float, float]) -> float:
+        """Approximate meter distance between two lat/lon points."""
+        lat_scale = 111_320
+        mean_lat = (point_a[0] + point_b[0]) / 2
+        lon_scale = 111_320 * abs(math.cos(math.radians(mean_lat)))
+        delta_lat = (point_a[0] - point_b[0]) * lat_scale
+        delta_lon = (point_a[1] - point_b[1]) * lon_scale
+        return (delta_lat ** 2 + delta_lon ** 2) ** 0.5
+
+    def _decode_polyline(self, encoded: str, precision: int = 6) -> List[Tuple[float, float]]:
+        """Decode an encoded polyline to lat,lon coordinates."""
         coords = []
         index = 0
         lat = 0
         lng = 0
+        scale = 10 ** precision
         
         while index < len(encoded):
             result = 0
@@ -229,7 +284,7 @@ class RouteAnalyzer:
             dlng = ~(result >> 1) if (result & 1) else (result >> 1)
             lng += dlng
             
-            coords.append((lat / 1e6, lng / 1e6))
+            coords.append((lat / scale, lng / scale))
         
         return coords
 
