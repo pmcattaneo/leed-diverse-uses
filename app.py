@@ -58,6 +58,44 @@ def destination_to_dict(dest: Destination) -> dict:
     }
 
 
+def is_destination_mapped(dest_dict: dict) -> bool:
+    """Return True when a destination has a current route mapping."""
+    return (
+        bool(dest_dict.get("route_geometry"))
+        and dest_dict.get("distance_m") is not None
+        and dest_dict.get("duration_s") is not None
+        and dest_dict.get("compliant") is not None
+    )
+
+
+def route_status_label(dest_dict: dict) -> str:
+    """Human-readable route status for tables and selectors."""
+    return "✓ Mapped" if is_destination_mapped(dest_dict) else "⚪ Unmapped"
+
+
+def clear_destination_route(
+    dest_dict: dict,
+    *,
+    lat: Optional[float] = None,
+    lon: Optional[float] = None,
+    address: Optional[str] = None,
+) -> dict:
+    """Clear calculated route data while preserving the destination record."""
+    cleared = dict(dest_dict)
+    if lat is not None:
+        cleared["lat"] = lat
+    if lon is not None:
+        cleared["lon"] = lon
+    if address is not None:
+        cleared["address"] = address
+
+    cleared["distance_m"] = None
+    cleared["duration_s"] = None
+    cleared["compliant"] = None
+    cleared["route_geometry"] = None
+    return cleared
+
+
 def destination_map_signature(dest: Destination) -> str:
     """Create a stable signature for a destination map extent."""
     geometry_count = len(dest.route_geometry or [])
@@ -127,6 +165,36 @@ def repair_project_routes(project) -> bool:
     return updated
 
 
+def remap_project_destinations(project) -> int:
+    """Recalculate routes for destinations currently marked as unmapped."""
+    if not project.destinations:
+        return 0
+
+    analyzer = RouteAnalyzer(origin=(project.origin_lat, project.origin_lon))
+    refreshed_destinations = []
+    remapped_count = 0
+
+    for dest_dict in project.destinations:
+        if is_destination_mapped(dest_dict):
+            refreshed_destinations.append(dest_dict)
+            continue
+
+        refreshed = analyzer.analyze_destination_coords(
+            name=dest_dict["name"],
+            lat=dest_dict["lat"],
+            lon=dest_dict["lon"],
+            address=dest_dict.get("address"),
+            category=dest_dict.get("category", ""),
+            max_distance_m=project.max_distance_m,
+        )
+        refreshed_destinations.append(destination_to_dict(refreshed))
+        remapped_count += 1
+
+    project.destinations = refreshed_destinations
+    project_manager.update_project(project)
+    return remapped_count
+
+
 def build_overview_map(
     project,
     exclude_origin: bool = False,
@@ -152,7 +220,7 @@ def build_overview_map(
 
     for idx, dest_dict in enumerate(project.destinations):
         dest = destination_from_dict(dest_dict)
-        color = "green" if dest.compliant else "red"
+        color = "green" if dest.compliant is True else "red" if dest.compliant is False else "gray"
 
         if idx != exclude_destination_index:
             folium.Marker(
@@ -247,7 +315,8 @@ def build_editable_overview_map(project, move_target: str, destination_index: Op
         marker_lon = dest["lon"]
         popup = f"{dest['name']}<br>{dest['address']}"
         tooltip = f"Drag '{dest['name']}'"
-        icon = folium.Icon(color="red" if not dest.get("compliant") else "green", icon="map-pin")
+        icon_color = "green" if dest.get("compliant") is True else "red" if dest.get("compliant") is False else "gray"
+        icon = folium.Icon(color=icon_color, icon="map-pin")
 
     folium.Marker(
         location=[marker_lat, marker_lon],
@@ -278,29 +347,19 @@ def build_editable_overview_map(project, move_target: str, destination_index: Op
 
 
 def move_project_origin(project, lat: float, lon: float) -> None:
-    """Move the project origin and recalculate all destination routes."""
-    analyzer = RouteAnalyzer(origin=(lat, lon))
+    """Move the project origin and mark all routes as unmapped."""
     project.origin_lat = lat
     project.origin_lon = lon
 
-    refreshed_destinations = []
-    for dest_dict in project.destinations:
-        refreshed = analyzer.analyze_destination_coords(
-            name=dest_dict["name"],
-            lat=dest_dict["lat"],
-            lon=dest_dict["lon"],
-            address=dest_dict.get("address"),
-            category=dest_dict.get("category", ""),
-            max_distance_m=project.max_distance_m,
-        )
-        refreshed_destinations.append(destination_to_dict(refreshed))
-
-    project.destinations = refreshed_destinations
+    project.destinations = [
+        clear_destination_route(dest_dict)
+        for dest_dict in project.destinations
+    ]
     project_manager.update_project(project)
 
 
 def move_destination_point(project, destination_index: int, lat: float, lon: float) -> None:
-    """Move one destination and recalculate its route from the current origin."""
+    """Move one destination and mark its route as unmapped."""
     analyzer = RouteAnalyzer(origin=(project.origin_lat, project.origin_lon))
     dest_dict = project.destinations[destination_index]
 
@@ -309,15 +368,12 @@ def move_destination_point(project, destination_index: int, lat: float, lon: flo
     except Exception:
         address = f"{lat:.6f}, {lon:.6f}"
 
-    refreshed = analyzer.analyze_destination_coords(
-        name=dest_dict["name"],
+    project.destinations[destination_index] = clear_destination_route(
+        dest_dict,
         lat=lat,
         lon=lon,
         address=address,
-        category=dest_dict.get("category", ""),
-        max_distance_m=project.max_distance_m,
     )
-    project.destinations[destination_index] = destination_to_dict(refreshed)
     project_manager.update_project(project)
 
 # ============= DASHBOARD PAGE =============
@@ -602,9 +658,6 @@ def page_project():
     if not project:
         st.error("Project not found")
         return
-
-    if project.destinations and repair_project_routes(project):
-        project = project_manager.get_project(project.project_id) or project
     
     # Header with back button
     col1, col2 = st.columns([1, 5])
@@ -652,6 +705,46 @@ def page_project():
         max_distance_mi = project.max_distance_m / 1609.34
         st.write(f"**Threshold: {max_distance_mi:.2f} mi**")
     
+    st.markdown("---")
+
+    remap_notice_key = f"project_remap_notice_{project.project_id}"
+    remap_notice = st.session_state.pop(remap_notice_key, None)
+    if remap_notice:
+        st.success(remap_notice)
+
+    unmapped_count = project.unmapped_count
+    total_count = project.total_count
+
+    remap_col, status_col = st.columns([1, 3])
+    with remap_col:
+        if st.button(
+            "🗺️ Remap Routes",
+            use_container_width=True,
+            disabled=unmapped_count == 0,
+        ):
+            try:
+                with st.spinner("Rebuilding walking routes..."):
+                    remapped_count = remap_project_destinations(project)
+                st.session_state[remap_notice_key] = (
+                    f"Remapped {remapped_count} destination"
+                    f"{'' if remapped_count == 1 else 's'}."
+                )
+                st.rerun()
+            except Exception as e:
+                st.error(f"Could not remap routes: {e}")
+
+    with status_col:
+        if total_count == 0:
+            st.caption("Add destinations to start mapping walking routes.")
+        elif unmapped_count == 0:
+            st.caption("All destinations are currently mapped.")
+        else:
+            st.caption(
+                f"{unmapped_count} destination"
+                f"{'' if unmapped_count == 1 else 's'}"
+                " need remapping after pin changes."
+            )
+
     st.markdown("---")
     
     # Tabs
@@ -704,16 +797,22 @@ def page_project():
         if project.destinations:
             df_data = []
             for dest in project.destinations:
-                distance_mi = dest["distance_m"] / 1609.34 if dest.get("distance_m") else 0
-                time_min = dest["duration_s"] / 60 if dest.get("duration_s") else 0
+                distance_m = dest.get("distance_m")
+                duration_s = dest.get("duration_s")
+                distance_mi = distance_m / 1609.34 if distance_m is not None else None
+                time_min = duration_s / 60 if duration_s is not None else None
                 df_data.append({
                     "Name": dest["name"],
                     "Category": dest.get("category", ""),
                     "Address": dest["address"],
-                    "Distance (mi)": f"{distance_mi:.2f}",
-                    "Time (min)": f"{time_min:.0f}",
-                    "Route": "✓ Mapped",
-                    "Compliant": "✓" if dest.get("compliant") else "✗"
+                    "Distance (mi)": f"{distance_mi:.2f}" if distance_mi is not None else "—",
+                    "Time (min)": f"{time_min:.0f}" if time_min is not None else "—",
+                    "Route": route_status_label(dest),
+                    "Compliant": (
+                        "✓" if dest.get("compliant") is True else
+                        "✗" if dest.get("compliant") is False else
+                        "—"
+                    ),
                 })
             
             df = pd.DataFrame(df_data)
@@ -721,16 +820,24 @@ def page_project():
             
             # Compliance summary
             compliant_count = project.compliant_count
-            total_count = project.total_count
+            mapped_count = project.mapped_count
+            unmapped_count = project.unmapped_count
             
             st.markdown("---")
             st.subheader("Export LEED Documentation")
             
             col1, col2 = st.columns(2)
             with col1:
-                st.metric("Compliant", f"{compliant_count}/{total_count}")
+                st.metric("Compliant", f"{compliant_count}/{mapped_count}" if mapped_count else "0/0")
             with col2:
-                st.metric("Routes Ready", f"{total_count}")
+                st.metric("Routes Ready", f"{mapped_count}/{project.total_count}")
+
+            if unmapped_count:
+                st.info(
+                    f"{unmapped_count} destination"
+                    f"{'' if unmapped_count == 1 else 's'}"
+                    " are currently unmapped. Remap routes before exporting a PDF package."
+                )
             
             col1, col2 = st.columns(2)
             with col1:
@@ -746,42 +853,39 @@ def page_project():
             
             with col2:
                 if st.button("📄 Generate PDF Package", use_container_width=True):
-                    with st.spinner("Generating PDF..."):
-                        try:
-                            output_path = Path.cwd() / f"{project.name.replace(' ', '_')}_report.pdf"
-                            map_paths = []
-                            
-                            for i, dest_dict in enumerate(project.destinations, start=1):
-                                analyzer = RouteAnalyzer(
-                                    origin=(project.origin_lat, project.origin_lon)
+                    if unmapped_count:
+                        st.error("Remap routes before generating the PDF package.")
+                    else:
+                        with st.spinner("Generating PDF..."):
+                            try:
+                                output_path = Path.cwd() / f"{project.name.replace(' ', '_')}_report.pdf"
+                                map_paths = []
+
+                                for i, dest_dict in enumerate(project.destinations, start=1):
+                                    analyzer = RouteAnalyzer(
+                                        origin=(project.origin_lat, project.origin_lon)
+                                    )
+                                    dest = destination_from_dict(dest_dict)
+                                    m = analyzer.make_route_map(
+                                        dest,
+                                        max_distance_m=project.max_distance_m,
+                                        enrich=False,
+                                    )
+                                    map_file = Path.cwd() / f"route_{i}_{dest.name.replace(' ', '_')}.html"
+                                    ReportGenerator.save_map_html(m, map_file)
+                                    map_paths.append(map_file)
+
+                                destinations = [destination_from_dict(d) for d in project.destinations]
+
+                                report = ReportGenerator(output_path=output_path)
+                                report.create_report(
+                                    origin=(project.origin_lat, project.origin_lon),
+                                    destinations=destinations,
+                                    map_html_paths=map_paths
                                 )
-                                dest = analyzer.prepare_destination_for_map(
-                                    destination_from_dict(dest_dict),
-                                    max_distance_m=project.max_distance_m,
-                                )
-                                m = analyzer.make_route_map(
-                                    dest,
-                                    max_distance_m=project.max_distance_m,
-                                    enrich=False,
-                                )
-                                map_file = Path.cwd() / f"route_{i}_{dest.name.replace(' ', '_')}.html"
-                                ReportGenerator.save_map_html(m, map_file)
-                                map_paths.append(map_file)
-                                project.destinations[i - 1] = destination_to_dict(dest)
-                            
-                            # Convert dict to Destination objects for report
-                            destinations = [destination_from_dict(d) for d in project.destinations]
-                            project_manager.update_project(project)
-                            
-                            report = ReportGenerator(output_path=output_path)
-                            report.create_report(
-                                origin=(project.origin_lat, project.origin_lon),
-                                destinations=destinations,
-                                map_html_paths=map_paths
-                            )
-                            st.success(f"✓ PDF report created: {output_path.name}")
-                        except Exception as e:
-                            st.error(f"Error generating PDF: {e}")
+                                st.success(f"✓ PDF report created: {output_path.name}")
+                            except Exception as e:
+                                st.error(f"Error generating PDF: {e}")
         else:
             st.info("No addresses added yet. Click '+ Add Address' to get started.")
     
@@ -791,7 +895,11 @@ def page_project():
             selected_idx = st.selectbox(
                 "Select a route to view",
                 range(len(project.destinations)),
-                format_func=lambda i: project.destinations[i]["name"]
+                format_func=lambda i: (
+                    project.destinations[i]["name"]
+                    if is_destination_mapped(project.destinations[i])
+                    else f"{project.destinations[i]['name']} (unmapped)"
+                ),
             )
             
             if selected_idx is not None:
@@ -801,37 +909,44 @@ def page_project():
                 col1, col2 = st.columns([2, 1])
                 
                 with col1:
-                    analyzer = RouteAnalyzer(
-                        origin=(project.origin_lat, project.origin_lon)
-                    )
-                    dest = analyzer.prepare_destination_for_map(dest, max_distance_m=project.max_distance_m)
-                    m = analyzer.make_route_map(
-                        dest,
-                        max_distance_m=project.max_distance_m,
-                        enrich=False,
-                    )
-                    st_folium(
-                        m,
-                        key=f"route_map_{project.project_id}_{selected_idx}_{destination_map_signature(dest)}",
-                        height=500,
-                        use_container_width=True,
-                        returned_objects=[],
-                    )
+                    if is_destination_mapped(dest_dict):
+                        analyzer = RouteAnalyzer(
+                            origin=(project.origin_lat, project.origin_lon)
+                        )
+                        m = analyzer.make_route_map(
+                            dest,
+                            max_distance_m=project.max_distance_m,
+                            enrich=False,
+                        )
+                        st_folium(
+                            m,
+                            key=f"route_map_{project.project_id}_{selected_idx}_{destination_map_signature(dest)}",
+                            height=500,
+                            use_container_width=True,
+                            returned_objects=[],
+                        )
+                    else:
+                        st.info(
+                            "This destination is currently unmapped. "
+                            "Use 'Remap Routes' above to rebuild the walking route."
+                        )
                 
                 with col2:
-                    distance_mi = (dest.distance_m or 0) / 1609.34
-                    time_min = (dest.duration_s or 0) / 60
+                    distance_mi = dest.distance_m / 1609.34 if dest.distance_m is not None else None
+                    time_min = dest.duration_s / 60 if dest.duration_s is not None else None
                     
                     st.markdown(f"### {dest.name}")
                     st.markdown(f"**Category:** {dest.category}")
                     st.markdown(f"**Address:** {dest.address}")
-                    st.metric("Distance", f"{distance_mi:.2f} mi")
-                    st.metric("Walking Time", f"{time_min:.0f} min")
+                    st.metric("Distance", f"{distance_mi:.2f} mi" if distance_mi is not None else "Unmapped")
+                    st.metric("Walking Time", f"{time_min:.0f} min" if time_min is not None else "Unmapped")
                     
-                    if dest.compliant:
+                    if dest.compliant is True:
                         st.success("✓ Compliant")
-                    else:
+                    elif dest.compliant is False:
                         st.warning("⚠️ Non-compliant")
+                    else:
+                        st.info("Route not mapped")
         else:
             st.info("No routes to display. Add addresses first.")
     
@@ -839,11 +954,12 @@ def page_project():
         st.subheader("Compliance Chart")
         if project.destinations:
             compliant_count = project.compliant_count
-            non_compliant_count = project.total_count - compliant_count
+            non_compliant_count = project.non_compliant_count
+            unmapped_count = project.unmapped_count
             
             chart_data = pd.DataFrame({
-                "Status": ["Compliant", "Non-compliant"],
-                "Count": [compliant_count, non_compliant_count]
+                "Status": ["Compliant", "Non-compliant", "Unmapped"],
+                "Count": [compliant_count, non_compliant_count, unmapped_count]
             })
             
             st.bar_chart(chart_data.set_index("Status"))
@@ -851,10 +967,17 @@ def page_project():
             st.markdown("---")
             st.write("### Distance Distribution")
             distance_df = pd.DataFrame({
-                "Name": [d["name"] for d in project.destinations],
-                "Distance (mi)": [(d.get("distance_m") or 0) / 1609.34 for d in project.destinations]
+                "Name": [d["name"] for d in project.destinations if d.get("distance_m") is not None],
+                "Distance (mi)": [
+                    d["distance_m"] / 1609.34
+                    for d in project.destinations
+                    if d.get("distance_m") is not None
+                ]
             })
-            st.bar_chart(distance_df.set_index("Name"))
+            if distance_df.empty:
+                st.info("No mapped route distances yet. Remap routes to populate this chart.")
+            else:
+                st.bar_chart(distance_df.set_index("Name"))
         else:
             st.info("No data to display. Add addresses first.")
     
@@ -912,20 +1035,21 @@ def page_project():
                 try:
                     if move_target == "Project origin":
                         if coords_changed(project.origin_lat, project.origin_lon, new_lat, new_lon):
-                            with st.spinner("Updating routes..."):
+                            with st.spinner("Updating location..."):
                                 move_project_origin(project, new_lat, new_lon)
                             st.session_state[notice_key] = (
-                                "Project origin moved and all walking routes were recalculated. "
-                                "The project address text now stays exactly as entered."
+                                "Project origin moved. Existing routes were marked as unmapped "
+                                "so you can remap them from the button above."
                             )
                     else:
                         current_dest = project.destinations[destination_index]
                         if coords_changed(current_dest["lat"], current_dest["lon"], new_lat, new_lon):
-                            with st.spinner("Updating route..."):
+                            with st.spinner("Updating location..."):
                                 move_destination_point(project, destination_index, new_lat, new_lon)
                             moved_name = current_dest["name"]
                             st.session_state[notice_key] = (
-                                f"Destination '{moved_name}' moved and its route was recalculated."
+                                f"Destination '{moved_name}' moved and marked as unmapped. "
+                                "Use the remap button above to rebuild its route."
                             )
 
                     st.session_state[drag_memory_key] = drag_signature

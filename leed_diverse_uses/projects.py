@@ -34,7 +34,29 @@ class Project:
     @property
     def compliant_count(self) -> int:
         """Count compliant destinations."""
-        return sum(1 for d in self.destinations if d.get("compliant", False))
+        return sum(1 for d in self.destinations if d.get("compliant") is True)
+
+    @property
+    def non_compliant_count(self) -> int:
+        """Count mapped, non-compliant destinations."""
+        return sum(1 for d in self.destinations if d.get("compliant") is False)
+
+    @property
+    def mapped_count(self) -> int:
+        """Count destinations with an active mapped route."""
+        return sum(
+            1
+            for d in self.destinations
+            if d.get("route_geometry")
+            and d.get("distance_m") is not None
+            and d.get("duration_s") is not None
+            and d.get("compliant") is not None
+        )
+
+    @property
+    def unmapped_count(self) -> int:
+        """Count destinations that need route recalculation."""
+        return self.total_count - self.mapped_count
 
     @property
     def total_count(self) -> int:
@@ -158,7 +180,7 @@ class ProjectManager:
         """Get overall statistics across all projects."""
         projects = self.list_projects()
         all_compliant = sum(p.compliant_count for p in projects)
-        all_non_compliant = sum(p.total_count - p.compliant_count for p in projects)
+        all_non_compliant = sum(p.non_compliant_count for p in projects)
         all_addresses = sum(p.total_count for p in projects)
         
         return {
