@@ -5,6 +5,7 @@ from typing import Optional
 import folium
 import pandas as pd
 import streamlit as st
+from folium.plugins import Draw
 from streamlit_folium import st_folium
 
 from leed_diverse_uses.core import Destination, RouteAnalyzer
@@ -50,6 +51,26 @@ def destination_to_dict(dest: Destination) -> dict:
         "compliant": dest.compliant,
         "route_geometry": dest.route_geometry,
     }
+
+
+def destination_map_signature(dest: Destination) -> str:
+    """Create a stable signature for a destination map extent."""
+    geometry_count = len(dest.route_geometry or [])
+    distance = round(dest.distance_m or 0, 2)
+    duration = round(dest.duration_s or 0, 2)
+    return (
+        f"{dest.name}:{dest.lat:.6f}:{dest.lon:.6f}:"
+        f"{distance}:{duration}:{geometry_count}"
+    )
+
+
+def project_map_signature(project) -> str:
+    """Create a stable signature for overview map extent changes."""
+    parts = [f"origin:{project.origin_lat:.6f}:{project.origin_lon:.6f}"]
+    for dest_dict in project.destinations:
+        dest = destination_from_dict(dest_dict)
+        parts.append(destination_map_signature(dest))
+    return "|".join(parts)
 
 
 def click_signature(map_data: Optional[dict]) -> Optional[str]:
@@ -102,7 +123,11 @@ def repair_project_routes(project) -> bool:
     return updated
 
 
-def build_overview_map(project) -> folium.Map:
+def build_overview_map(
+    project,
+    exclude_origin: bool = False,
+    exclude_destination_index: Optional[int] = None,
+) -> folium.Map:
     """Create a map with the origin, all destinations, and saved routes."""
     m = folium.Map(
         location=[project.origin_lat, project.origin_lon],
@@ -111,25 +136,27 @@ def build_overview_map(project) -> folium.Map:
         control_scale=True,
     )
 
-    folium.Marker(
-        location=[project.origin_lat, project.origin_lon],
-        popup="Project Origin",
-        tooltip="Project Origin",
-        icon=folium.Icon(color="blue", icon="home"),
-    ).add_to(m)
+    if not exclude_origin:
+        folium.Marker(
+            location=[project.origin_lat, project.origin_lon],
+            popup="Project Origin",
+            tooltip="Project Origin",
+            icon=folium.Icon(color="blue", icon="home"),
+        ).add_to(m)
 
     all_points = [(project.origin_lat, project.origin_lon)]
 
-    for dest_dict in project.destinations:
+    for idx, dest_dict in enumerate(project.destinations):
         dest = destination_from_dict(dest_dict)
         color = "green" if dest.compliant else "red"
 
-        folium.Marker(
-            location=[dest.lat, dest.lon],
-            popup=f"{dest.name}<br>{dest.address}",
-            tooltip=dest.name,
-            icon=folium.Icon(color=color, icon="map-pin"),
-        ).add_to(m)
+        if idx != exclude_destination_index:
+            folium.Marker(
+                location=[dest.lat, dest.lon],
+                popup=f"{dest.name}<br>{dest.address}",
+                tooltip=dest.name,
+                icon=folium.Icon(color=color, icon="map-pin"),
+            ).add_to(m)
 
         all_points.append((dest.lat, dest.lon))
 
@@ -148,16 +175,100 @@ def build_overview_map(project) -> folium.Map:
     return m
 
 
+def extract_drawn_point(map_data: Optional[dict]) -> Optional[tuple[float, float]]:
+    """Extract a single point from a Draw/Leaflet GeoJSON payload."""
+    if not map_data:
+        return None
+
+    candidates = [
+        map_data.get("last_active_drawing"),
+        map_data.get("all_drawings"),
+    ]
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+
+        features = []
+        if candidate.get("type") == "Feature":
+            features = [candidate]
+        elif candidate.get("type") == "FeatureCollection":
+            features = candidate.get("features", [])
+
+        for feature in features:
+            geometry = feature.get("geometry", {})
+            if geometry.get("type") != "Point":
+                continue
+
+            coords = geometry.get("coordinates", [])
+            if len(coords) >= 2:
+                lon, lat = coords[:2]
+                return lat, lon
+
+    return None
+
+
+def coords_changed(current_lat: float, current_lon: float, new_lat: float, new_lon: float) -> bool:
+    """Ignore tiny coordinate differences from frontend serialization."""
+    return round(current_lat, 6) != round(new_lat, 6) or round(current_lon, 6) != round(new_lon, 6)
+
+
+def build_editable_overview_map(project, move_target: str, destination_index: Optional[int]) -> folium.Map:
+    """Create an overview map with one editable marker for dragging."""
+    m = build_overview_map(
+        project,
+        exclude_origin=move_target == "Project origin",
+        exclude_destination_index=destination_index if move_target == "Destination" else None,
+    )
+    editable_group = folium.FeatureGroup(name="Editable marker")
+
+    if move_target == "Project origin":
+        marker_lat = project.origin_lat
+        marker_lon = project.origin_lon
+        popup = "Project Origin"
+        tooltip = "Drag this origin marker"
+        icon = folium.Icon(color="blue", icon="home")
+    else:
+        dest = project.destinations[destination_index]
+        marker_lat = dest["lat"]
+        marker_lon = dest["lon"]
+        popup = f"{dest['name']}<br>{dest['address']}"
+        tooltip = f"Drag '{dest['name']}'"
+        icon = folium.Icon(color="red" if not dest.get("compliant") else "green", icon="map-pin")
+
+    folium.Marker(
+        location=[marker_lat, marker_lon],
+        popup=popup,
+        tooltip=tooltip,
+        icon=icon,
+    ).add_to(editable_group)
+    editable_group.add_to(m)
+
+    Draw(
+        feature_group=editable_group,
+        draw_options={
+            "polyline": False,
+            "polygon": False,
+            "rectangle": False,
+            "circle": False,
+            "circlemarker": False,
+            "marker": False,
+        },
+        edit_options={
+            "edit": True,
+            "remove": False,
+        },
+        show_geometry_on_click=False,
+    ).add_to(m)
+
+    return m
+
+
 def move_project_origin(project, lat: float, lon: float) -> None:
     """Move the project origin and recalculate all destination routes."""
     analyzer = RouteAnalyzer(origin=(lat, lon))
     project.origin_lat = lat
     project.origin_lon = lon
-
-    try:
-        project.address = analyzer.reverse_geocode(lat, lon)
-    except Exception:
-        project.address = f"{lat:.6f}, {lon:.6f}"
 
     refreshed_destinations = []
     for dest_dict in project.destinations:
@@ -668,7 +779,7 @@ def page_project():
                     m = analyzer.make_route_map(dest, max_distance_m=project.max_distance_m)
                     st_folium(
                         m,
-                        key=f"route_map_{project.project_id}_{selected_idx}",
+                        key=f"route_map_{project.project_id}_{selected_idx}_{destination_map_signature(dest)}",
                         height=500,
                         use_container_width=True,
                         returned_objects=[],
@@ -717,8 +828,7 @@ def page_project():
     with tab4:
         st.subheader("Overview Map")
         notice_key = f"overview_notice_{project.project_id}"
-        pending_click_key = f"overview_pending_click_{project.project_id}"
-        click_memory_key = f"overview_last_click_{project.project_id}"
+        drag_memory_key = f"overview_last_drag_{project.project_id}"
 
         notice = st.session_state.pop(notice_key, None)
         if notice:
@@ -745,59 +855,53 @@ def page_project():
             )
             selected_name = project.destinations[destination_index]["name"]
             st.caption(
-                f"Click the map to choose a new location for '{selected_name}', then apply the change below."
+                f"Click the edit tool on the map, drag '{selected_name}' to its new location, then click Save."
             )
         else:
-            st.caption("Click the map to choose a new location for the project origin, then apply the change below.")
+            st.caption("Click the edit tool on the map, drag the origin marker, then click Save.")
 
-        m = build_overview_map(project)
+        m = build_editable_overview_map(project, move_target, destination_index)
+        overview_signature = project_map_signature(project)
         map_data = st_folium(
             m,
-            key=f"overview_map_{project.project_id}",
+            key=f"overview_map_{project.project_id}_{move_target}_{destination_index}_{overview_signature}",
             height=550,
             use_container_width=True,
-            returned_objects=["last_clicked"],
+            returned_objects=["all_drawings", "last_active_drawing"],
         )
 
-        current_click = click_signature(map_data)
-        if current_click and current_click != st.session_state.get(click_memory_key):
-            st.session_state[pending_click_key] = map_data["last_clicked"]
-            st.session_state[click_memory_key] = current_click
+        dragged_point = extract_drawn_point(map_data)
+        if dragged_point:
+            new_lat, new_lon = dragged_point
+            drag_signature = f"{move_target}:{destination_index}:{new_lat:.6f},{new_lon:.6f}"
 
-        pending_click = st.session_state.get(pending_click_key)
-        if pending_click:
-            st.info(
-                f"Selected map point: {pending_click['lat']:.6f}, {pending_click['lng']:.6f}"
-            )
-
-            apply_label = "Apply New Origin" if move_target == "Project origin" else "Apply New Destination Location"
-            if st.button(apply_label, use_container_width=True, type="primary"):
-                with st.spinner("Updating routes..."):
-                    try:
-                        if move_target == "Project origin":
-                            move_project_origin(
-                                project,
-                                pending_click["lat"],
-                                pending_click["lng"],
+            if drag_signature != st.session_state.get(drag_memory_key):
+                try:
+                    if move_target == "Project origin":
+                        if coords_changed(project.origin_lat, project.origin_lon, new_lat, new_lon):
+                            with st.spinner("Updating routes..."):
+                                move_project_origin(project, new_lat, new_lon)
+                            st.session_state[notice_key] = (
+                                "Project origin moved and all walking routes were recalculated. "
+                                "The project address text now stays exactly as entered."
                             )
-                            st.session_state[notice_key] = "Project origin moved and all walking routes were recalculated."
-                        else:
-                            move_destination_point(
-                                project,
-                                destination_index,
-                                pending_click["lat"],
-                                pending_click["lng"],
+                    else:
+                        current_dest = project.destinations[destination_index]
+                        if coords_changed(current_dest["lat"], current_dest["lon"], new_lat, new_lon):
+                            with st.spinner("Updating route..."):
+                                move_destination_point(project, destination_index, new_lat, new_lon)
+                            moved_name = current_dest["name"]
+                            st.session_state[notice_key] = (
+                                f"Destination '{moved_name}' moved and its route was recalculated."
                             )
-                            moved_name = project.destinations[destination_index]["name"]
-                            st.session_state[notice_key] = f"Destination '{moved_name}' moved and its route was recalculated."
 
-                        st.session_state.pop(pending_click_key, None)
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Could not update the map point: {e}")
+                    st.session_state[drag_memory_key] = drag_signature
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Could not update the dragged marker: {e}")
 
         if not project.destinations:
-            st.info("Add destinations to display walking routes on the overview map.")
+            st.info("You can still drag the origin marker here even before any destinations are added.")
 
 # ============= ROUTER =============
 if st.session_state.page == "dashboard":
