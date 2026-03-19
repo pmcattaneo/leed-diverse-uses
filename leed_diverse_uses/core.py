@@ -117,6 +117,17 @@ class RouteAnalyzer:
             max_distance_m=max_distance_m,
         )
 
+    def prepare_destination_for_map(
+        self,
+        destination: Destination,
+        max_distance_m: float = 804.67,
+    ) -> Destination:
+        """Best-effort route enrichment for map rendering."""
+        try:
+            return self.enrich_destination(destination, max_distance_m=max_distance_m)
+        except Exception:
+            return destination
+
     def analyze_destinations(
         self,
         destinations: List[Tuple[str, str]],
@@ -247,6 +258,87 @@ class RouteAnalyzer:
         delta_lon = (point_a[1] - point_b[1]) * lon_scale
         return (delta_lat ** 2 + delta_lon ** 2) ** 0.5
 
+    @staticmethod
+    def _bounds_from_bounding_box(
+        bounding_box: Optional[list],
+    ) -> Optional[List[Tuple[float, float]]]:
+        """Convert a Nominatim bounding box to Folium fit_bounds input."""
+        if not bounding_box or len(bounding_box) < 4:
+            return None
+
+        south, north, west, east = (float(value) for value in bounding_box[:4])
+        if south > north:
+            south, north = north, south
+        if west > east:
+            west, east = east, west
+
+        lat_padding = max((north - south) * 0.05, 0.005)
+        lon_padding = max((east - west) * 0.05, 0.005)
+
+        return [
+            (south - lat_padding, west - lon_padding),
+            (north + lat_padding, east + lon_padding),
+        ]
+
+    def _nearest_city_bounds(self, point: Tuple[float, float]) -> Optional[List[Tuple[float, float]]]:
+        """Resolve the nearest city-like locality and return its bounds."""
+        try:
+            location = self.geolocator.reverse(point, exactly_one=True, addressdetails=True)
+        except Exception:
+            return None
+
+        if not location:
+            return None
+
+        address = location.raw.get("address", {})
+        locality_key = next(
+            (
+                key
+                for key in ("city", "town", "village", "municipality", "hamlet", "borough")
+                if address.get(key)
+            ),
+            None,
+        )
+
+        if locality_key:
+            locality_name = address[locality_key]
+            structured_query = {"city": locality_name}
+            if address.get("state"):
+                structured_query["state"] = address["state"]
+            if address.get("country"):
+                structured_query["country"] = address["country"]
+
+            query_variants = [
+                (structured_query, "city"),
+                (structured_query, "settlement"),
+                (structured_query, None),
+            ]
+            freeform_query = ", ".join(
+                part for part in (locality_name, address.get("state"), address.get("country")) if part
+            )
+            if freeform_query:
+                query_variants.append((freeform_query, None))
+
+            for query, featuretype in query_variants:
+                try:
+                    locality = self.geolocator.geocode(
+                        query,
+                        exactly_one=True,
+                        addressdetails=True,
+                        featuretype=featuretype,
+                    )
+                except Exception:
+                    continue
+
+                if not locality:
+                    continue
+
+                bounds = self._bounds_from_bounding_box(locality.raw.get("boundingbox"))
+                if bounds:
+                    return bounds
+
+        return self._bounds_from_bounding_box(location.raw.get("boundingbox"))
+
     def _decode_polyline(self, encoded: str, precision: int = 6) -> List[Tuple[float, float]]:
         """Decode an encoded polyline to lat,lon coordinates."""
         coords = []
@@ -293,9 +385,12 @@ class RouteAnalyzer:
         destination: Destination,
         zoom_start: int = 15,
         max_distance_m: float = 804.67,
+        enrich: bool = True,
     ) -> folium.Map:
         """Create a Folium map showing the route from origin to destination."""
-        destination = self.enrich_destination(destination, max_distance_m=max_distance_m)
+        if enrich:
+            destination = self.prepare_destination_for_map(destination, max_distance_m=max_distance_m)
+
         m = folium.Map(
             location=self.origin,
             zoom_start=zoom_start,
@@ -326,7 +421,12 @@ class RouteAnalyzer:
                 opacity=0.8,
             ).add_to(m)
 
-        route_points = destination.route_geometry or [self.origin, (destination.lat, destination.lon)]
-        m.fit_bounds(route_points)
+        if destination.route_geometry:
+            route_points = [self.origin, (destination.lat, destination.lon), *destination.route_geometry]
+            m.fit_bounds(route_points)
+        else:
+            city_bounds = self._nearest_city_bounds((destination.lat, destination.lon))
+            fallback_bounds = city_bounds or [self.origin, (destination.lat, destination.lon)]
+            m.fit_bounds(fallback_bounds)
 
         return m

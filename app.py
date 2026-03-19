@@ -749,11 +749,15 @@ def page_project():
                                 analyzer = RouteAnalyzer(
                                     origin=(project.origin_lat, project.origin_lon)
                                 )
-                                dest = analyzer.enrich_destination(
+                                dest = analyzer.prepare_destination_for_map(
                                     destination_from_dict(dest_dict),
                                     max_distance_m=project.max_distance_m,
                                 )
-                                m = analyzer.make_route_map(dest, max_distance_m=project.max_distance_m)
+                                m = analyzer.make_route_map(
+                                    dest,
+                                    max_distance_m=project.max_distance_m,
+                                    enrich=False,
+                                )
                                 map_file = Path.cwd() / f"route_{i}_{dest.name.replace(' ', '_')}.html"
                                 ReportGenerator.save_map_html(m, map_file)
                                 map_paths.append(map_file)
@@ -794,8 +798,12 @@ def page_project():
                     analyzer = RouteAnalyzer(
                         origin=(project.origin_lat, project.origin_lon)
                     )
-                    dest = analyzer.enrich_destination(dest, max_distance_m=project.max_distance_m)
-                    m = analyzer.make_route_map(dest, max_distance_m=project.max_distance_m)
+                    dest = analyzer.prepare_destination_for_map(dest, max_distance_m=project.max_distance_m)
+                    m = analyzer.make_route_map(
+                        dest,
+                        max_distance_m=project.max_distance_m,
+                        enrich=False,
+                    )
                     st_folium(
                         m,
                         key=f"route_map_{project.project_id}_{selected_idx}_{destination_map_signature(dest)}",
