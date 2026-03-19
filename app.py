@@ -1,5 +1,6 @@
 from io import StringIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Optional
 
 import folium
@@ -822,6 +823,8 @@ def page_project():
             compliant_count = project.compliant_count
             mapped_count = project.mapped_count
             unmapped_count = project.unmapped_count
+            pdf_data_key = f"project_pdf_data_{project.project_id}"
+            pdf_name_key = f"project_pdf_name_{project.project_id}"
             
             st.markdown("---")
             st.subheader("Export LEED Documentation")
@@ -858,34 +861,49 @@ def page_project():
                     else:
                         with st.spinner("Generating PDF..."):
                             try:
-                                output_path = Path.cwd() / f"{project.name.replace(' ', '_')}_report.pdf"
-                                map_paths = []
+                                with TemporaryDirectory() as temp_dir:
+                                    temp_path = Path(temp_dir)
+                                    output_path = temp_path / f"{project.name.replace(' ', '_')}_report.pdf"
+                                    map_paths = []
 
-                                for i, dest_dict in enumerate(project.destinations, start=1):
-                                    analyzer = RouteAnalyzer(
-                                        origin=(project.origin_lat, project.origin_lon)
+                                    for i, dest_dict in enumerate(project.destinations, start=1):
+                                        analyzer = RouteAnalyzer(
+                                            origin=(project.origin_lat, project.origin_lon)
+                                        )
+                                        dest = destination_from_dict(dest_dict)
+                                        m = analyzer.make_route_map(
+                                            dest,
+                                            max_distance_m=project.max_distance_m,
+                                            enrich=False,
+                                        )
+                                        map_file = temp_path / f"route_{i}_{dest.name.replace(' ', '_')}.html"
+                                        ReportGenerator.save_map_html(m, map_file)
+                                        map_paths.append(map_file)
+
+                                    destinations = [destination_from_dict(d) for d in project.destinations]
+
+                                    report = ReportGenerator(output_path=output_path)
+                                    report.create_report(
+                                        origin=(project.origin_lat, project.origin_lon),
+                                        destinations=destinations,
+                                        map_html_paths=map_paths
                                     )
-                                    dest = destination_from_dict(dest_dict)
-                                    m = analyzer.make_route_map(
-                                        dest,
-                                        max_distance_m=project.max_distance_m,
-                                        enrich=False,
-                                    )
-                                    map_file = Path.cwd() / f"route_{i}_{dest.name.replace(' ', '_')}.html"
-                                    ReportGenerator.save_map_html(m, map_file)
-                                    map_paths.append(map_file)
+                                    st.session_state[pdf_data_key] = output_path.read_bytes()
+                                    st.session_state[pdf_name_key] = output_path.name
 
-                                destinations = [destination_from_dict(d) for d in project.destinations]
-
-                                report = ReportGenerator(output_path=output_path)
-                                report.create_report(
-                                    origin=(project.origin_lat, project.origin_lon),
-                                    destinations=destinations,
-                                    map_html_paths=map_paths
-                                )
-                                st.success(f"✓ PDF report created: {output_path.name}")
+                                st.success("✓ PDF package is ready to download.")
                             except Exception as e:
                                 st.error(f"Error generating PDF: {e}")
+
+            if st.session_state.get(pdf_data_key) and st.session_state.get(pdf_name_key):
+                st.download_button(
+                    label="⬇️ Download PDF Package",
+                    data=st.session_state[pdf_data_key],
+                    file_name=st.session_state[pdf_name_key],
+                    mime="application/pdf",
+                    use_container_width=True,
+                    key=f"download_pdf_{project.project_id}",
+                )
         else:
             st.info("No addresses added yet. Click '+ Add Address' to get started.")
     
