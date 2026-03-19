@@ -84,12 +84,18 @@ class ReportGenerator:
         # staticmap expects (lon, lat)
         route_coords = [(lon, lat) for lat, lon in dest.route_geometry]
 
-        m = StaticMap(700, 450, url_template="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png")
+        m = StaticMap(
+            700,
+            450,
+            padding_x=40,
+            padding_y=40,
+            url_template="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        )
         m.add_line(Line(route_coords, "blue", 4))
         m.add_marker(CircleMarker((origin[1], origin[0]), "green", 12))
         m.add_marker(CircleMarker((dest.lon, dest.lat), "red", 12))
 
-        image = m.render(zoom=14)
+        image = m.render()
         bio = BytesIO()
         image.save(bio, format="PNG")
         bio.seek(0)
