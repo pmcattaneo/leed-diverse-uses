@@ -73,6 +73,14 @@ def project_map_signature(project) -> str:
     return "|".join(parts)
 
 
+def set_create_project_coords(lat: float, lon: float) -> None:
+    """Keep create-project coordinate state and widgets synchronized."""
+    st.session_state.create_form_lat = lat
+    st.session_state.create_form_lon = lon
+    st.session_state.lat_input = lat
+    st.session_state.lon_input = lon
+
+
 def click_signature(map_data: Optional[dict]) -> Optional[str]:
     """Build a stable click signature for map interactions."""
     if not map_data or not map_data.get("last_clicked"):
@@ -468,8 +476,14 @@ def page_create_project():
         st.session_state.create_form_lat = 40.748817
     if "create_form_lon" not in st.session_state:
         st.session_state.create_form_lon = -73.985428
+    if "lat_input" not in st.session_state:
+        st.session_state.lat_input = st.session_state.create_form_lat
+    if "lon_input" not in st.session_state:
+        st.session_state.lon_input = st.session_state.create_form_lon
     if "geocode_attempted" not in st.session_state:
         st.session_state.geocode_attempted = False
+    if "create_project_geocode_message" not in st.session_state:
+        st.session_state.create_project_geocode_message = None
     
     # Project info section
     col1, col2 = st.columns(2)
@@ -497,32 +511,32 @@ def page_create_project():
                 try:
                     analyzer = RouteAnalyzer(origin=(0, 0))
                     lat, lon = analyzer.geocode(project_address)
-                    st.session_state.create_form_lat = lat
-                    st.session_state.create_form_lon = lon
+                    set_create_project_coords(lat, lon)
                     st.session_state.geocode_attempted = True
-                    st.success(f"✓ Found: {lat:.4f}, {lon:.4f}")
+                    st.session_state.create_project_geocode_message = f"Found: {lat:.4f}, {lon:.4f}"
+                    st.rerun()
                 except Exception as e:
                     st.error(f"Could not geocode: {e}")
             else:
                 st.error("Enter an address first")
+
+        if st.session_state.create_project_geocode_message:
+            st.success(f"✓ {st.session_state.create_project_geocode_message}")
     
     with col2:
         st.write("**Project Location**")
         st.info("💡 Enter address above and click 'Locate Address', or click the map to set coordinates manually")
         origin_lat = st.number_input(
             "Latitude", 
-            value=st.session_state.create_form_lat, 
             format="%.6f",
             key="lat_input"
         )
         origin_lon = st.number_input(
             "Longitude", 
-            value=st.session_state.create_form_lon, 
             format="%.6f",
             key="lon_input"
         )
-        st.session_state.create_form_lat = origin_lat
-        st.session_state.create_form_lon = origin_lon
+        set_create_project_coords(origin_lat, origin_lon)
     
     st.markdown("---")
     
@@ -553,8 +567,7 @@ def page_create_project():
     if current_click and current_click != st.session_state.get("create_project_map_click"):
         origin_lat = map_data["last_clicked"]["lat"]
         origin_lon = map_data["last_clicked"]["lng"]
-        st.session_state.create_form_lat = origin_lat
-        st.session_state.create_form_lon = origin_lon
+        set_create_project_coords(origin_lat, origin_lon)
         st.session_state.create_project_map_click = current_click
         st.rerun()
     
