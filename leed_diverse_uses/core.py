@@ -22,6 +22,39 @@ class Destination:
     route_geometry: Optional[List[Tuple[float, float]]] = None
 
 
+def bounds_from_points(
+    points: List[Tuple[float, float]],
+    padding_ratio: float = 0.05,
+    min_padding: float = 0.001,
+) -> Optional[List[Tuple[float, float]]]:
+    """Build southwest/northeast bounds from a set of map points."""
+    valid_points = []
+    for point in points:
+        try:
+            lat, lon = float(point[0]), float(point[1])
+        except (IndexError, TypeError, ValueError):
+            continue
+
+        if -90 <= lat <= 90 and -180 <= lon <= 180:
+            valid_points.append((lat, lon))
+
+    if not valid_points:
+        return None
+
+    min_lat = min(lat for lat, _ in valid_points)
+    max_lat = max(lat for lat, _ in valid_points)
+    min_lon = min(lon for _, lon in valid_points)
+    max_lon = max(lon for _, lon in valid_points)
+
+    lat_padding = max((max_lat - min_lat) * padding_ratio, min_padding)
+    lon_padding = max((max_lon - min_lon) * padding_ratio, min_padding)
+
+    return [
+        (min_lat - lat_padding, min_lon - lon_padding),
+        (max_lat + lat_padding, max_lon + lon_padding),
+    ]
+
+
 class RouteAnalyzer:
     """Analyzes walking routes from an origin point to destination addresses using Valhalla API."""
 
@@ -423,10 +456,12 @@ class RouteAnalyzer:
 
         if destination.route_geometry:
             route_points = [self.origin, (destination.lat, destination.lon), *destination.route_geometry]
-            m.fit_bounds(route_points)
+            route_bounds = bounds_from_points(route_points)
+            if route_bounds:
+                m.fit_bounds(route_bounds)
         else:
             city_bounds = self._nearest_city_bounds((destination.lat, destination.lon))
-            fallback_bounds = city_bounds or [self.origin, (destination.lat, destination.lon)]
+            fallback_bounds = city_bounds or bounds_from_points([self.origin, (destination.lat, destination.lon)])
             m.fit_bounds(fallback_bounds)
 
         return m

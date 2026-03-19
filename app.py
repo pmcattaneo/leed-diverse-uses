@@ -8,7 +8,7 @@ import streamlit as st
 from folium.plugins import Draw
 from streamlit_folium import st_folium
 
-from leed_diverse_uses.core import Destination, RouteAnalyzer
+from leed_diverse_uses.core import Destination, RouteAnalyzer, bounds_from_points
 from leed_diverse_uses.pdf_report import ReportGenerator
 from leed_diverse_uses.projects import ProjectManager
 
@@ -169,7 +169,9 @@ def build_overview_map(
             all_points.extend(dest.route_geometry)
 
     if len(all_points) > 1:
-        m.fit_bounds(all_points)
+        overview_bounds = bounds_from_points(all_points)
+        if overview_bounds:
+            m.fit_bounds(overview_bounds)
 
     return m
 
