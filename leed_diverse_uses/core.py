@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 import folium
 import requests
+from branca.element import MacroElement, Template
 from geopy.geocoders import Nominatim
 
 
@@ -53,6 +55,77 @@ def bounds_from_points(
         (min_lat - lat_padding, min_lon - lon_padding),
         (max_lat + lat_padding, max_lon + lon_padding),
     ]
+
+
+class ResponsiveFitBounds(MacroElement):
+    """Refit bounds after the map container has a measurable size."""
+
+    def __init__(self, bounds: List[Tuple[float, float]], padding: Tuple[int, int] = (20, 20)):
+        super().__init__()
+        self._name = "ResponsiveFitBounds"
+        self.bounds_json = json.dumps(bounds)
+        self.options_json = json.dumps({"padding": list(padding)})
+        self._template = Template(
+            """
+            {% macro script(this, kwargs) %}
+            (function() {
+                var map = {{ this._parent.get_name() }};
+                var bounds = {{ this.bounds_json }};
+                var options = {{ this.options_json }};
+                var lastWidth = null;
+                var lastHeight = null;
+
+                function applyBounds(force) {
+                    var container = map.getContainer();
+                    if (!container) {
+                        return;
+                    }
+
+                    var rect = container.getBoundingClientRect();
+                    if (rect.width <= 0 || rect.height <= 0) {
+                        return;
+                    }
+
+                    if (!force && rect.width === lastWidth && rect.height === lastHeight) {
+                        return;
+                    }
+
+                    lastWidth = rect.width;
+                    lastHeight = rect.height;
+                    map.invalidateSize();
+                    map.fitBounds(bounds, options);
+                }
+
+                map.whenReady(function() {
+                    applyBounds(true);
+                    setTimeout(function() { applyBounds(true); }, 150);
+                    setTimeout(function() { applyBounds(true); }, 600);
+
+                    if (typeof ResizeObserver !== "undefined") {
+                        var observer = new ResizeObserver(function() {
+                            applyBounds(false);
+                        });
+                        observer.observe(document.body);
+                        observer.observe(map.getContainer());
+                    } else {
+                        window.addEventListener("resize", function() {
+                            applyBounds(true);
+                        });
+                    }
+                });
+            })();
+            {% endmacro %}
+            """
+        )
+
+
+def add_responsive_bounds(
+    map_obj: folium.Map,
+    bounds: Optional[List[Tuple[float, float]]],
+) -> None:
+    """Attach bounds that re-apply after hidden containers become visible."""
+    if bounds:
+        map_obj.add_child(ResponsiveFitBounds(bounds))
 
 
 class RouteAnalyzer:
@@ -457,11 +530,10 @@ class RouteAnalyzer:
         if destination.route_geometry:
             route_points = [self.origin, (destination.lat, destination.lon), *destination.route_geometry]
             route_bounds = bounds_from_points(route_points)
-            if route_bounds:
-                m.fit_bounds(route_bounds)
+            add_responsive_bounds(m, route_bounds)
         else:
             city_bounds = self._nearest_city_bounds((destination.lat, destination.lon))
             fallback_bounds = city_bounds or bounds_from_points([self.origin, (destination.lat, destination.lon)])
-            m.fit_bounds(fallback_bounds)
+            add_responsive_bounds(m, fallback_bounds)
 
         return m
