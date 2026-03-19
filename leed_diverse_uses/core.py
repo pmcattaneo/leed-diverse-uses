@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -37,6 +36,13 @@ class RouteAnalyzer:
             raise ValueError(f"Could not geocode address: {address}")
         return location.latitude, location.longitude
 
+    def reverse_geocode(self, lat: float, lon: float) -> str:
+        """Reverse geocode a point to a human-readable address."""
+        location = self.geolocator.reverse((lat, lon), exactly_one=True)
+        if not location:
+            raise ValueError(f"Could not reverse geocode coordinates: {lat}, {lon}")
+        return location.address
+
     def analyze_destination(
         self,
         name: str,
@@ -45,6 +51,24 @@ class RouteAnalyzer:
     ) -> Destination:
         """Return a Destination with route info and compliance flag."""
         lat, lon = self.geocode(address)
+        return self.analyze_destination_coords(
+            name=name,
+            lat=lat,
+            lon=lon,
+            address=address,
+            max_distance_m=max_distance_m,
+        )
+
+    def analyze_destination_coords(
+        self,
+        name: str,
+        lat: float,
+        lon: float,
+        address: Optional[str] = None,
+        category: str = "Non-specified",
+        max_distance_m: float = 804.67,
+    ) -> Destination:
+        """Return a Destination with route info for an already-known point."""
         route = self._get_walking_route(self.origin, (lat, lon))
 
         distance_m = float(route["distance"])
@@ -55,13 +79,32 @@ class RouteAnalyzer:
 
         return Destination(
             name=name,
-            address=address,
+            address=address or f"{lat:.6f}, {lon:.6f}",
             lat=lat,
             lon=lon,
+            category=category,
             distance_m=distance_m,
             duration_s=duration_s,
             compliant=compliant,
             route_geometry=geometry,
+        )
+
+    def enrich_destination(
+        self,
+        destination: Destination,
+        max_distance_m: float = 804.67,
+    ) -> Destination:
+        """Populate route details for an existing destination."""
+        if destination.route_geometry and destination.distance_m is not None and destination.duration_s is not None:
+            return destination
+
+        return self.analyze_destination_coords(
+            name=destination.name,
+            lat=destination.lat,
+            lon=destination.lon,
+            address=destination.address,
+            category=destination.category,
+            max_distance_m=max_distance_m,
         )
 
     def analyze_destinations(
@@ -190,9 +233,20 @@ class RouteAnalyzer:
         
         return coords
 
-    def make_route_map(self, destination: Destination, zoom_start: int = 15) -> folium.Map:
+    def make_route_map(
+        self,
+        destination: Destination,
+        zoom_start: int = 15,
+        max_distance_m: float = 804.67,
+    ) -> folium.Map:
         """Create a Folium map showing the route from origin to destination."""
-        m = folium.Map(location=self.origin, zoom_start=zoom_start, tiles="OpenStreetMap")
+        destination = self.enrich_destination(destination, max_distance_m=max_distance_m)
+        m = folium.Map(
+            location=self.origin,
+            zoom_start=zoom_start,
+            tiles="OpenStreetMap",
+            control_scale=True,
+        )
 
         # origin marker
         folium.Marker(
@@ -204,7 +258,7 @@ class RouteAnalyzer:
         # destination marker
         folium.Marker(
             location=(destination.lat, destination.lon),
-            popup=f"{destination.name}\n{destination.address}",
+            popup=f"{destination.name}<br>{destination.address}",
             icon=folium.Icon(color="red", icon="flag"),
         ).add_to(m)
 
@@ -216,5 +270,8 @@ class RouteAnalyzer:
                 weight=5,
                 opacity=0.8,
             ).add_to(m)
+
+        route_points = destination.route_geometry or [self.origin, (destination.lat, destination.lon)]
+        m.fit_bounds(route_points)
 
         return m

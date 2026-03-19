@@ -1,6 +1,6 @@
-import os
 from io import StringIO
 from pathlib import Path
+from typing import Optional
 
 import folium
 import pandas as pd
@@ -20,6 +20,181 @@ if "current_project_id" not in st.session_state:
     st.session_state.current_project_id = None
 
 project_manager = ProjectManager()
+
+
+def destination_from_dict(dest_dict: dict) -> Destination:
+    """Convert stored destination data into a Destination object."""
+    return Destination(
+        name=dest_dict["name"],
+        address=dest_dict["address"],
+        lat=dest_dict["lat"],
+        lon=dest_dict["lon"],
+        category=dest_dict.get("category", ""),
+        distance_m=dest_dict.get("distance_m"),
+        duration_s=dest_dict.get("duration_s"),
+        compliant=dest_dict.get("compliant"),
+        route_geometry=dest_dict.get("route_geometry"),
+    )
+
+
+def destination_to_dict(dest: Destination) -> dict:
+    """Convert a Destination object to the stored JSON shape."""
+    return {
+        "name": dest.name,
+        "address": dest.address,
+        "lat": dest.lat,
+        "lon": dest.lon,
+        "category": dest.category,
+        "distance_m": dest.distance_m,
+        "duration_s": dest.duration_s,
+        "compliant": dest.compliant,
+        "route_geometry": dest.route_geometry,
+    }
+
+
+def click_signature(map_data: Optional[dict]) -> Optional[str]:
+    """Build a stable click signature for map interactions."""
+    if not map_data or not map_data.get("last_clicked"):
+        return None
+
+    clicked = map_data["last_clicked"]
+    return f"{clicked['lat']:.6f},{clicked['lng']:.6f}"
+
+
+def repair_project_routes(project) -> bool:
+    """Backfill route details for legacy saved destinations."""
+    if not project.destinations:
+        return False
+
+    analyzer = RouteAnalyzer(origin=(project.origin_lat, project.origin_lon))
+    updated = False
+    refreshed_destinations = []
+
+    for dest_dict in project.destinations:
+        needs_refresh = (
+            not dest_dict.get("route_geometry")
+            or dest_dict.get("distance_m") is None
+            or dest_dict.get("duration_s") is None
+            or dest_dict.get("compliant") is None
+        )
+
+        if needs_refresh:
+            try:
+                refreshed = analyzer.analyze_destination_coords(
+                    name=dest_dict["name"],
+                    lat=dest_dict["lat"],
+                    lon=dest_dict["lon"],
+                    address=dest_dict.get("address"),
+                    category=dest_dict.get("category", ""),
+                    max_distance_m=project.max_distance_m,
+                )
+                refreshed_destinations.append(destination_to_dict(refreshed))
+                updated = True
+            except Exception:
+                refreshed_destinations.append(dest_dict)
+        else:
+            refreshed_destinations.append(dest_dict)
+
+    if updated:
+        project.destinations = refreshed_destinations
+        project_manager.update_project(project)
+
+    return updated
+
+
+def build_overview_map(project) -> folium.Map:
+    """Create a map with the origin, all destinations, and saved routes."""
+    m = folium.Map(
+        location=[project.origin_lat, project.origin_lon],
+        zoom_start=13,
+        tiles="OpenStreetMap",
+        control_scale=True,
+    )
+
+    folium.Marker(
+        location=[project.origin_lat, project.origin_lon],
+        popup="Project Origin",
+        tooltip="Project Origin",
+        icon=folium.Icon(color="blue", icon="home"),
+    ).add_to(m)
+
+    all_points = [(project.origin_lat, project.origin_lon)]
+
+    for dest_dict in project.destinations:
+        dest = destination_from_dict(dest_dict)
+        color = "green" if dest.compliant else "red"
+
+        folium.Marker(
+            location=[dest.lat, dest.lon],
+            popup=f"{dest.name}<br>{dest.address}",
+            tooltip=dest.name,
+            icon=folium.Icon(color=color, icon="map-pin"),
+        ).add_to(m)
+
+        all_points.append((dest.lat, dest.lon))
+
+        if dest.route_geometry:
+            folium.PolyLine(
+                dest.route_geometry,
+                color="green" if dest.compliant else "orange",
+                weight=4,
+                opacity=0.75,
+            ).add_to(m)
+            all_points.extend(dest.route_geometry)
+
+    if len(all_points) > 1:
+        m.fit_bounds(all_points)
+
+    return m
+
+
+def move_project_origin(project, lat: float, lon: float) -> None:
+    """Move the project origin and recalculate all destination routes."""
+    analyzer = RouteAnalyzer(origin=(lat, lon))
+    project.origin_lat = lat
+    project.origin_lon = lon
+
+    try:
+        project.address = analyzer.reverse_geocode(lat, lon)
+    except Exception:
+        project.address = f"{lat:.6f}, {lon:.6f}"
+
+    refreshed_destinations = []
+    for dest_dict in project.destinations:
+        refreshed = analyzer.analyze_destination_coords(
+            name=dest_dict["name"],
+            lat=dest_dict["lat"],
+            lon=dest_dict["lon"],
+            address=dest_dict.get("address"),
+            category=dest_dict.get("category", ""),
+            max_distance_m=project.max_distance_m,
+        )
+        refreshed_destinations.append(destination_to_dict(refreshed))
+
+    project.destinations = refreshed_destinations
+    project_manager.update_project(project)
+
+
+def move_destination_point(project, destination_index: int, lat: float, lon: float) -> None:
+    """Move one destination and recalculate its route from the current origin."""
+    analyzer = RouteAnalyzer(origin=(project.origin_lat, project.origin_lon))
+    dest_dict = project.destinations[destination_index]
+
+    try:
+        address = analyzer.reverse_geocode(lat, lon)
+    except Exception:
+        address = f"{lat:.6f}, {lon:.6f}"
+
+    refreshed = analyzer.analyze_destination_coords(
+        name=dest_dict["name"],
+        lat=lat,
+        lon=lon,
+        address=address,
+        category=dest_dict.get("category", ""),
+        max_distance_m=project.max_distance_m,
+    )
+    project.destinations[destination_index] = destination_to_dict(refreshed)
+    project_manager.update_project(project)
 
 # ============= DASHBOARD PAGE =============
 def page_dashboard():
@@ -227,6 +402,8 @@ def page_create_project():
             format="%.6f",
             key="lon_input"
         )
+        st.session_state.create_form_lat = origin_lat
+        st.session_state.create_form_lon = origin_lon
     
     st.markdown("---")
     
@@ -235,7 +412,8 @@ def page_create_project():
     m = folium.Map(
         location=[origin_lat, origin_lon],
         zoom_start=14,
-        tiles="OpenStreetMap"
+        tiles="OpenStreetMap",
+        control_scale=True,
     )
     folium.Marker(
         location=[origin_lat, origin_lon],
@@ -243,14 +421,22 @@ def page_create_project():
         icon=folium.Icon(color="blue", icon="home"),
     ).add_to(m)
     
-    map_data = st_folium(m, width=700, height=400)
+    map_data = st_folium(
+        m,
+        key="create_project_map",
+        height=400,
+        use_container_width=True,
+        returned_objects=["last_clicked"],
+    )
     
     # Handle map click
-    if map_data and map_data.get("last_clicked"):
+    current_click = click_signature(map_data)
+    if current_click and current_click != st.session_state.get("create_project_map_click"):
         origin_lat = map_data["last_clicked"]["lat"]
         origin_lon = map_data["last_clicked"]["lng"]
         st.session_state.create_form_lat = origin_lat
         st.session_state.create_form_lon = origin_lon
+        st.session_state.create_project_map_click = current_click
         st.rerun()
     
     st.markdown("---")
@@ -280,6 +466,9 @@ def page_project():
     if not project:
         st.error("Project not found")
         return
+
+    if project.destinations and repair_project_routes(project):
+        project = project_manager.get_project(project.project_id) or project
     
     # Header with back button
     col1, col2 = st.columns([1, 5])
@@ -364,14 +553,8 @@ def page_project():
                         )
                         dest.category = category
                         dest_dict = {
-                            "name": dest.name,
-                            "address": dest.address,
-                            "lat": dest.lat,
-                            "lon": dest.lon,
-                            "category": dest.category,
-                            "distance_m": dest.distance_m,
-                            "duration_s": dest.duration_s,
-                            "compliant": dest.compliant,
+                            **destination_to_dict(dest),
+                            "category": category,
                         }
                         project_manager.add_destination(project.project_id, dest_dict)
                         st.session_state.show_add_form = False
@@ -433,39 +616,22 @@ def page_project():
                             map_paths = []
                             
                             for i, dest_dict in enumerate(project.destinations, start=1):
-                                dest = Destination(
-                                    name=dest_dict["name"],
-                                    address=dest_dict["address"],
-                                    lat=dest_dict["lat"],
-                                    lon=dest_dict["lon"],
-                                    category=dest_dict.get("category", ""),
-                                    distance_m=dest_dict.get("distance_m"),
-                                    duration_s=dest_dict.get("duration_s"),
-                                    compliant=dest_dict.get("compliant"),
-                                )
-                                
                                 analyzer = RouteAnalyzer(
                                     origin=(project.origin_lat, project.origin_lon)
                                 )
-                                m = analyzer.make_route_map(dest)
+                                dest = analyzer.enrich_destination(
+                                    destination_from_dict(dest_dict),
+                                    max_distance_m=project.max_distance_m,
+                                )
+                                m = analyzer.make_route_map(dest, max_distance_m=project.max_distance_m)
                                 map_file = Path.cwd() / f"route_{i}_{dest.name.replace(' ', '_')}.html"
                                 ReportGenerator.save_map_html(m, map_file)
                                 map_paths.append(map_file)
+                                project.destinations[i - 1] = destination_to_dict(dest)
                             
                             # Convert dict to Destination objects for report
-                            destinations = [
-                                Destination(
-                                    name=d["name"],
-                                    address=d["address"],
-                                    lat=d["lat"],
-                                    lon=d["lon"],
-                                    category=d.get("category", ""),
-                                    distance_m=d.get("distance_m"),
-                                    duration_s=d.get("duration_s"),
-                                    compliant=d.get("compliant"),
-                                )
-                                for d in project.destinations
-                            ]
+                            destinations = [destination_from_dict(d) for d in project.destinations]
+                            project_manager.update_project(project)
                             
                             report = ReportGenerator(output_path=output_path)
                             report.create_report(
@@ -490,17 +656,7 @@ def page_project():
             
             if selected_idx is not None:
                 dest_dict = project.destinations[selected_idx]
-                dest = Destination(
-                    name=dest_dict["name"],
-                    address=dest_dict["address"],
-                    lat=dest_dict["lat"],
-                    lon=dest_dict["lon"],
-                    category=dest_dict.get("category", ""),
-                    distance_m=dest_dict.get("distance_m"),
-                    duration_s=dest_dict.get("duration_s"),
-                    compliant=dest_dict.get("compliant"),
-                    route_geometry=None,
-                )
+                dest = destination_from_dict(dest_dict)
                 
                 col1, col2 = st.columns([2, 1])
                 
@@ -508,12 +664,19 @@ def page_project():
                     analyzer = RouteAnalyzer(
                         origin=(project.origin_lat, project.origin_lon)
                     )
-                    m = analyzer.make_route_map(dest)
-                    st_folium(m, width=700, height=500)
+                    dest = analyzer.enrich_destination(dest, max_distance_m=project.max_distance_m)
+                    m = analyzer.make_route_map(dest, max_distance_m=project.max_distance_m)
+                    st_folium(
+                        m,
+                        key=f"route_map_{project.project_id}_{selected_idx}",
+                        height=500,
+                        use_container_width=True,
+                        returned_objects=[],
+                    )
                 
                 with col2:
-                    distance_mi = dest.distance_m / 1609.34
-                    time_min = dest.duration_s / 60
+                    distance_mi = (dest.distance_m or 0) / 1609.34
+                    time_min = (dest.duration_s or 0) / 60
                     
                     st.markdown(f"### {dest.name}")
                     st.markdown(f"**Category:** {dest.category}")
@@ -543,10 +706,9 @@ def page_project():
             
             st.markdown("---")
             st.write("### Distance Distribution")
-            distances_mi = [d["distance_m"] / 1609.34 for d in project.destinations if d.get("distance_m")]
             distance_df = pd.DataFrame({
                 "Name": [d["name"] for d in project.destinations],
-                "Distance (mi)": [d["distance_m"] / 1609.34 for d in project.destinations]
+                "Distance (mi)": [(d.get("distance_m") or 0) / 1609.34 for d in project.destinations]
             })
             st.bar_chart(distance_df.set_index("Name"))
         else:
@@ -554,32 +716,88 @@ def page_project():
     
     with tab4:
         st.subheader("Overview Map")
+        notice_key = f"overview_notice_{project.project_id}"
+        pending_click_key = f"overview_pending_click_{project.project_id}"
+        click_memory_key = f"overview_last_click_{project.project_id}"
+
+        notice = st.session_state.pop(notice_key, None)
+        if notice:
+            st.success(notice)
+
+        move_options = ["Project origin"]
         if project.destinations:
-            m = folium.Map(
-                location=[project.origin_lat, project.origin_lon],
-                zoom_start=13,
-                tiles="OpenStreetMap"
+            move_options.append("Destination")
+
+        move_target = st.radio(
+            "Point to reposition",
+            move_options,
+            horizontal=True,
+            key=f"overview_move_target_{project.project_id}",
+        )
+
+        destination_index = None
+        if move_target == "Destination":
+            destination_index = st.selectbox(
+                "Destination to move",
+                range(len(project.destinations)),
+                format_func=lambda i: project.destinations[i]["name"],
+                key=f"overview_destination_target_{project.project_id}",
             )
-            
-            # Add origin marker
-            folium.Marker(
-                location=[project.origin_lat, project.origin_lon],
-                popup="Project Origin",
-                icon=folium.Icon(color="blue", icon="home"),
-            ).add_to(m)
-            
-            # Add destination markers
-            for dest_dict in project.destinations:
-                color = "green" if dest_dict.get("compliant") else "red"
-                folium.Marker(
-                    location=[dest_dict["lat"], dest_dict["lon"]],
-                    popup=f"{dest_dict['name']}<br>{dest_dict['address']}",
-                    icon=folium.Icon(color=color, icon="map-pin"),
-                ).add_to(m)
-            
-            st_folium(m, width=700, height=500)
+            selected_name = project.destinations[destination_index]["name"]
+            st.caption(
+                f"Click the map to choose a new location for '{selected_name}', then apply the change below."
+            )
         else:
-            st.info("No routes to display on the map. Add addresses first.")
+            st.caption("Click the map to choose a new location for the project origin, then apply the change below.")
+
+        m = build_overview_map(project)
+        map_data = st_folium(
+            m,
+            key=f"overview_map_{project.project_id}",
+            height=550,
+            use_container_width=True,
+            returned_objects=["last_clicked"],
+        )
+
+        current_click = click_signature(map_data)
+        if current_click and current_click != st.session_state.get(click_memory_key):
+            st.session_state[pending_click_key] = map_data["last_clicked"]
+            st.session_state[click_memory_key] = current_click
+
+        pending_click = st.session_state.get(pending_click_key)
+        if pending_click:
+            st.info(
+                f"Selected map point: {pending_click['lat']:.6f}, {pending_click['lng']:.6f}"
+            )
+
+            apply_label = "Apply New Origin" if move_target == "Project origin" else "Apply New Destination Location"
+            if st.button(apply_label, use_container_width=True, type="primary"):
+                with st.spinner("Updating routes..."):
+                    try:
+                        if move_target == "Project origin":
+                            move_project_origin(
+                                project,
+                                pending_click["lat"],
+                                pending_click["lng"],
+                            )
+                            st.session_state[notice_key] = "Project origin moved and all walking routes were recalculated."
+                        else:
+                            move_destination_point(
+                                project,
+                                destination_index,
+                                pending_click["lat"],
+                                pending_click["lng"],
+                            )
+                            moved_name = project.destinations[destination_index]["name"]
+                            st.session_state[notice_key] = f"Destination '{moved_name}' moved and its route was recalculated."
+
+                        st.session_state.pop(pending_click_key, None)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Could not update the map point: {e}")
+
+        if not project.destinations:
+            st.info("Add destinations to display walking routes on the overview map.")
 
 # ============= ROUTER =============
 if st.session_state.page == "dashboard":

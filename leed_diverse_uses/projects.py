@@ -135,6 +135,7 @@ class ProjectManager:
                 "distance_m": destination.distance_m,
                 "duration_s": destination.duration_s,
                 "compliant": destination.compliant,
+                "route_geometry": destination.route_geometry,
             }
         elif isinstance(destination, dict):
             dest_dict = destination
