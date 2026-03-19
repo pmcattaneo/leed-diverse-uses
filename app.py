@@ -677,7 +677,7 @@ def page_project():
     st.markdown("---")
     
     # Project info
-    col1, col2, col3 = st.columns([3, 1, 1])
+    col1, col2 = st.columns([3, 1])
     with col1:
         project.name = st.text_input("Project Name", value=project.name, label_visibility="collapsed")
         project.address = st.text_input("Project Address", value=project.address, label_visibility="collapsed")
@@ -686,10 +686,6 @@ def page_project():
         project.status = st.selectbox("Status", ["Draft", "In Progress", "Approved"], 
                                        index=["Draft", "In Progress", "Approved"].index(project.status),
                                        key="status_select")
-    
-    with col3:
-        if st.button("+ Add Address"):
-            st.session_state.show_add_form = True
     
     project_manager.update_project(project)
     
@@ -715,7 +711,11 @@ def page_project():
     unmapped_count = project.unmapped_count
     total_count = project.total_count
 
-    remap_col, status_col = st.columns([1, 3])
+    add_col, remap_col, status_col = st.columns([1, 1, 3])
+    with add_col:
+        if st.button("+ Add Address", use_container_width=True):
+            st.session_state.show_add_form = True
+
     with remap_col:
         if st.button(
             "🗺️ Remap Routes",
