@@ -74,11 +74,14 @@ def project_map_signature(project) -> str:
 
 
 def set_create_project_coords(lat: float, lon: float) -> None:
-    """Keep create-project coordinate state and widgets synchronized."""
+    """Update the canonical create-project coordinates."""
     st.session_state.create_form_lat = lat
     st.session_state.create_form_lon = lon
-    st.session_state.lat_input = lat
-    st.session_state.lon_input = lon
+
+
+def queue_create_project_coords(lat: float, lon: float) -> None:
+    """Queue coordinate changes so widget state can be updated on the next rerun."""
+    st.session_state.create_project_pending_coords = (lat, lon)
 
 
 def click_signature(map_data: Optional[dict]) -> Optional[str]:
@@ -476,6 +479,13 @@ def page_create_project():
         st.session_state.create_form_lat = 40.748817
     if "create_form_lon" not in st.session_state:
         st.session_state.create_form_lon = -73.985428
+    pending_coords = st.session_state.pop("create_project_pending_coords", None)
+    if pending_coords:
+        pending_lat, pending_lon = pending_coords
+        st.session_state.create_form_lat = pending_lat
+        st.session_state.create_form_lon = pending_lon
+        st.session_state.lat_input = pending_lat
+        st.session_state.lon_input = pending_lon
     if "lat_input" not in st.session_state:
         st.session_state.lat_input = st.session_state.create_form_lat
     if "lon_input" not in st.session_state:
@@ -511,7 +521,7 @@ def page_create_project():
                 try:
                     analyzer = RouteAnalyzer(origin=(0, 0))
                     lat, lon = analyzer.geocode(project_address)
-                    set_create_project_coords(lat, lon)
+                    queue_create_project_coords(lat, lon)
                     st.session_state.geocode_attempted = True
                     st.session_state.create_project_geocode_message = f"Found: {lat:.4f}, {lon:.4f}"
                     st.rerun()
@@ -567,7 +577,7 @@ def page_create_project():
     if current_click and current_click != st.session_state.get("create_project_map_click"):
         origin_lat = map_data["last_clicked"]["lat"]
         origin_lon = map_data["last_clicked"]["lng"]
-        set_create_project_coords(origin_lat, origin_lon)
+        queue_create_project_coords(origin_lat, origin_lon)
         st.session_state.create_project_map_click = current_click
         st.rerun()
     
