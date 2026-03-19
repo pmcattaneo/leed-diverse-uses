@@ -190,13 +190,21 @@ def extract_drawn_point(map_data: Optional[dict]) -> Optional[tuple[float, float
             continue
 
         features = []
-        if candidate.get("type") == "Feature":
+        if isinstance(candidate, list):
+            features = candidate
+        elif not isinstance(candidate, dict):
+            continue
+        elif candidate.get("type") == "Feature":
             features = [candidate]
         elif candidate.get("type") == "FeatureCollection":
             features = candidate.get("features", [])
 
         for feature in features:
+            if not isinstance(feature, dict):
+                continue
             geometry = feature.get("geometry", {})
+            if not isinstance(geometry, dict):
+                continue
             if geometry.get("type") != "Point":
                 continue
 
