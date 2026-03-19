@@ -79,23 +79,42 @@ class ReportGenerator:
         """Save a Folium map object to an HTML file."""
         map_obj.save(str(output_path))
 
+    @staticmethod
+    def _route_snapshot_view(route_coords: list[tuple[float, float]]) -> tuple[int, tuple[float, float]]:
+        """Calculate a route-focused zoom and center for PDF snapshots."""
+        fit_map = StaticMap(
+            700,
+            450,
+            padding_x=20,
+            padding_y=20,
+            url_template="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
+        )
+        fit_map.add_line(Line(route_coords, "blue", 4))
+
+        min_lon = min(lon for lon, _ in route_coords)
+        max_lon = max(lon for lon, _ in route_coords)
+        min_lat = min(lat for _, lat in route_coords)
+        max_lat = max(lat for _, lat in route_coords)
+        center = ((min_lon + max_lon) / 2, (min_lat + max_lat) / 2)
+
+        return fit_map._calculate_zoom(), center
+
     def _render_route_image(self, origin: tuple[float, float], dest: Destination) -> Image:
         """Render a static map image (PNG) showing the walking route."""
         # staticmap expects (lon, lat)
         route_coords = [(lon, lat) for lat, lon in dest.route_geometry]
+        zoom, center = self._route_snapshot_view(route_coords)
 
         m = StaticMap(
             700,
             450,
-            padding_x=40,
-            padding_y=40,
             url_template="https://a.tile.openstreetmap.org/{z}/{x}/{y}.png",
         )
         m.add_line(Line(route_coords, "blue", 4))
         m.add_marker(CircleMarker((origin[1], origin[0]), "green", 12))
         m.add_marker(CircleMarker((dest.lon, dest.lat), "red", 12))
 
-        image = m.render()
+        image = m.render(zoom=zoom, center=center)
         bio = BytesIO()
         image.save(bio, format="PNG")
         bio.seek(0)
