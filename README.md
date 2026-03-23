@@ -5,7 +5,7 @@ A comprehensive Python application for evaluating LEED v4/v4.1 **Diverse Uses** 
 ## Features
 
 - **Interactive origin point selection** — Click on an OSM map to select your starting point
-- **Add multiple destinations** — Button-driven interface with name, address, and category selection
+- **Add multiple destinations** — Button-driven interface with name, address, LEED use category, and specific use selection
 - **Uses OpenStreetMap** (via Valhalla's free public API) to calculate walking directions
 - **Calculates compliance** based on configured walking distance thresholds
 - **Tabbed interface** with 4 views:
@@ -44,9 +44,10 @@ The app will open in your browser at `http://localhost:8501`. No API key setup n
 2. **Click "+ Add Address"** — Open the form to add a new destination:
    - Name: Name of the destination
    - Address: Full address (will be geocoded)
-   - Category: Select from predefined categories (Services, Food Retail, Restaurant, etc.)
+   - Use Category: Select the LEED Appendix 1 use category
+   - Specific Use: Select the qualifying use within that category
 3. **View Destinations** — All addresses appear in the "Addresses" tab with a table showing:
-   - Name, Category, Address
+   - Name, Category, Specific Use, Address
    - Distance (miles) and Walking Time (minutes)
    - Compliance status (✓ or ✗)
 4. **View Routes** — Select individual routes in the "Routes" tab to see interactive maps

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .core import Destination
+from .use_types import normalize_use_selection
 
 
 @dataclass
@@ -148,19 +149,32 @@ class ProjectManager:
         
         # Handle both Destination objects and dictionaries
         if isinstance(destination, Destination):
+            category, specific_use = normalize_use_selection(
+                category=destination.category,
+                specific_use=destination.specific_use,
+            )
             dest_dict = {
                 "name": destination.name,
                 "address": destination.address,
                 "lat": destination.lat,
                 "lon": destination.lon,
-                "category": destination.category,
+                "category": category,
+                "specific_use": specific_use,
                 "distance_m": destination.distance_m,
                 "duration_s": destination.duration_s,
                 "compliant": destination.compliant,
                 "route_geometry": destination.route_geometry,
             }
         elif isinstance(destination, dict):
-            dest_dict = destination
+            category, specific_use = normalize_use_selection(
+                category=destination.get("category"),
+                specific_use=destination.get("specific_use"),
+            )
+            dest_dict = {
+                **destination,
+                "category": category,
+                "specific_use": specific_use,
+            }
         else:
             raise TypeError(f"destination must be Destination or dict, got {type(destination)}")
         

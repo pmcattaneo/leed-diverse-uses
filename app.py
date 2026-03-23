@@ -17,6 +17,12 @@ from leed_diverse_uses.core import (
 )
 from leed_diverse_uses.pdf_report import ReportGenerator
 from leed_diverse_uses.projects import ProjectManager
+from leed_diverse_uses.use_types import (
+    DEFAULT_CATEGORY,
+    category_options,
+    normalize_use_selection,
+    specific_use_options,
+)
 
 st.set_page_config(page_title="LEED Diverse Uses", layout="wide")
 
@@ -31,12 +37,17 @@ project_manager = ProjectManager()
 
 def destination_from_dict(dest_dict: dict) -> Destination:
     """Convert stored destination data into a Destination object."""
+    category, specific_use = normalize_use_selection(
+        category=dest_dict.get("category"),
+        specific_use=dest_dict.get("specific_use"),
+    )
     return Destination(
         name=dest_dict["name"],
         address=dest_dict["address"],
         lat=dest_dict["lat"],
         lon=dest_dict["lon"],
-        category=dest_dict.get("category", ""),
+        category=category,
+        specific_use=specific_use,
         distance_m=dest_dict.get("distance_m"),
         duration_s=dest_dict.get("duration_s"),
         compliant=dest_dict.get("compliant"),
@@ -46,12 +57,17 @@ def destination_from_dict(dest_dict: dict) -> Destination:
 
 def destination_to_dict(dest: Destination) -> dict:
     """Convert a Destination object to the stored JSON shape."""
+    category, specific_use = normalize_use_selection(
+        category=dest.category,
+        specific_use=dest.specific_use,
+    )
     return {
         "name": dest.name,
         "address": dest.address,
         "lat": dest.lat,
         "lon": dest.lon,
-        "category": dest.category,
+        "category": category,
+        "specific_use": specific_use,
         "distance_m": dest.distance_m,
         "duration_s": dest.duration_s,
         "compliant": dest.compliant,
@@ -166,6 +182,27 @@ def repair_project_routes(project) -> bool:
     return updated
 
 
+def normalize_project_destinations(project) -> bool:
+    """Persist normalized LEED use category data for saved destinations."""
+    if not project.destinations:
+        return False
+
+    normalized_destinations = []
+    updated = False
+
+    for dest_dict in project.destinations:
+        normalized_dict = destination_to_dict(destination_from_dict(dest_dict))
+        normalized_destinations.append(normalized_dict)
+        if normalized_dict != dest_dict:
+            updated = True
+
+    if updated:
+        project.destinations = normalized_destinations
+        project_manager.update_project(project)
+
+    return updated
+
+
 def remap_project_destinations(project) -> int:
     """Recalculate routes for destinations currently marked as unmapped."""
     if not project.destinations:
@@ -180,12 +217,14 @@ def remap_project_destinations(project) -> int:
             refreshed_destinations.append(dest_dict)
             continue
 
+        normalized_dest = destination_from_dict(dest_dict)
         refreshed = analyzer.analyze_destination_coords(
             name=dest_dict["name"],
             lat=dest_dict["lat"],
             lon=dest_dict["lon"],
             address=dest_dict.get("address"),
-            category=dest_dict.get("category", ""),
+            category=normalized_dest.category,
+            specific_use=normalized_dest.specific_use,
             max_distance_m=project.max_distance_m,
         )
         refreshed_destinations.append(destination_to_dict(refreshed))
@@ -659,6 +698,8 @@ def page_project():
     if not project:
         st.error("Project not found")
         return
+
+    normalize_project_destinations(project)
     
     # Header with back button
     col1, col2 = st.columns([1, 5])
@@ -762,12 +803,11 @@ def page_project():
                     name = st.text_input("Name")
                     address = st.text_input("Address")
                 with col2:
-                    category_options = [
-                        "Services", "Food Retail", "Community-Serving Retail",
-                        "Recreation", "Restaurant", "Library", "Park", "School",
-                        "Museum", "Other"
-                    ]
-                    category = st.selectbox("Category", category_options)
+                    category = st.selectbox("Use Category", category_options())
+                    specific_use = st.selectbox(
+                        "Specific Use",
+                        specific_use_options(category),
+                    )
                 
                 submit_btn = st.form_submit_button("Add Address", use_container_width=True)
                 
@@ -782,10 +822,8 @@ def page_project():
                             max_distance_m=project.max_distance_m
                         )
                         dest.category = category
-                        dest_dict = {
-                            **destination_to_dict(dest),
-                            "category": category,
-                        }
+                        dest.specific_use = specific_use
+                        dest_dict = destination_to_dict(dest)
                         project_manager.add_destination(project.project_id, dest_dict)
                         st.session_state.show_add_form = False
                         st.rerun()
@@ -798,13 +836,15 @@ def page_project():
         if project.destinations:
             df_data = []
             for dest in project.destinations:
+                normalized_dest = destination_from_dict(dest)
                 distance_m = dest.get("distance_m")
                 duration_s = dest.get("duration_s")
                 distance_mi = distance_m / 1609.34 if distance_m is not None else None
                 time_min = duration_s / 60 if duration_s is not None else None
                 df_data.append({
                     "Name": dest["name"],
-                    "Category": dest.get("category", ""),
+                    "Category": normalized_dest.category,
+                    "Specific Use": normalized_dest.specific_use or "—",
                     "Address": dest["address"],
                     "Distance (mi)": f"{distance_mi:.2f}" if distance_mi is not None else "—",
                     "Time (min)": f"{time_min:.0f}" if time_min is not None else "—",
@@ -954,7 +994,10 @@ def page_project():
                     time_min = dest.duration_s / 60 if dest.duration_s is not None else None
                     
                     st.markdown(f"### {dest.name}")
-                    st.markdown(f"**Category:** {dest.category}")
+                    st.markdown(
+                        f"**Category:** {dest.category if dest.category != DEFAULT_CATEGORY else '—'}"
+                    )
+                    st.markdown(f"**Specific Use:** {dest.specific_use or '—'}")
                     st.markdown(f"**Address:** {dest.address}")
                     st.metric("Distance", f"{distance_mi:.2f} mi" if distance_mi is not None else "Unmapped")
                     st.metric("Walking Time", f"{time_min:.0f} min" if time_min is not None else "Unmapped")

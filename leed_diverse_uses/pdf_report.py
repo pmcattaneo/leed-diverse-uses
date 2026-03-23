@@ -13,6 +13,7 @@ from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer
 from staticmap import CircleMarker, Line, StaticMap
 
 from .core import Destination
+from .use_types import DEFAULT_CATEGORY
 
 
 @dataclass
@@ -44,10 +45,22 @@ class ReportGenerator:
         story.append(Spacer(1, 0.15 * inch))
 
         for i, dest in enumerate(destinations, start=1):
+            category_line = (
+                f"Category: {dest.category}<br/>"
+                if dest.category and dest.category != DEFAULT_CATEGORY
+                else ""
+            )
+            specific_use_line = (
+                f"Specific Use: {dest.specific_use}<br/>"
+                if dest.specific_use
+                else ""
+            )
             story.append(Paragraph(f"{i}. {dest.name}", styles["Heading2"]))
             story.append(
                 Paragraph(
                     f"Address: {dest.address}<br/>"
+                    f"{category_line}"
+                    f"{specific_use_line}"
                     f"Distance (m): {dest.distance_m:.1f}<br/>"
                     f"Walking time (min): {dest.duration_s / 60:.1f}<br/>"
                     f"Compliant: {'Yes' if dest.compliant else 'No'}",

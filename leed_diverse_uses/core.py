@@ -10,6 +10,8 @@ import requests
 from branca.element import MacroElement, Template
 from geopy.geocoders import Nominatim
 
+from .use_types import DEFAULT_SPECIFIC_USE
+
 
 @dataclass
 class Destination:
@@ -18,6 +20,7 @@ class Destination:
     lat: float
     lon: float
     category: str = "Non-specified"
+    specific_use: str = DEFAULT_SPECIFIC_USE
     distance_m: Optional[float] = None
     duration_s: Optional[float] = None
     compliant: Optional[bool] = None
@@ -173,6 +176,7 @@ class RouteAnalyzer:
         lon: float,
         address: Optional[str] = None,
         category: str = "Non-specified",
+        specific_use: str = DEFAULT_SPECIFIC_USE,
         max_distance_m: float = 804.67,
     ) -> Destination:
         """Return a Destination with route info for an already-known point."""
@@ -190,6 +194,7 @@ class RouteAnalyzer:
             lat=lat,
             lon=lon,
             category=category,
+            specific_use=specific_use,
             distance_m=distance_m,
             duration_s=duration_s,
             compliant=compliant,
@@ -220,6 +225,7 @@ class RouteAnalyzer:
             lon=destination.lon,
             address=destination.address,
             category=destination.category,
+            specific_use=destination.specific_use,
             max_distance_m=max_distance_m,
         )
 
