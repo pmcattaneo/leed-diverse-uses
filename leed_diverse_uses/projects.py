@@ -23,7 +23,12 @@ class Project:
     destinations: List[Dict] = field(default_factory=list)
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     updated_at: str = field(default_factory=lambda: datetime.now().isoformat())
-    max_distance_m: float = 804.67
+    max_distance_m: float = 402.34  # Default to 1/4 mile (approx 402.34m)
+    non_res_sqft: float = 0.0
+    land_area_sqft: float = 0.0
+    dwelling_units: int = 0
+    res_land_area_acres: float = 0.0
+    radius_miles: float = 0.25
     project_id: Optional[str] = None
 
     def __post_init__(self):
