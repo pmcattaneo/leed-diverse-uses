@@ -797,38 +797,73 @@ def page_project():
         
         # Add address form
         if st.session_state.get("show_add_form", False):
-            with st.form("add_address_form"):
-                col1, col2 = st.columns(2)
-                with col1:
-                    name = st.text_input("Name")
-                    address = st.text_input("Address")
-                with col2:
-                    category = st.selectbox("Use Category", category_options())
-                    specific_use = st.selectbox(
-                        "Specific Use",
-                        specific_use_options(category),
+            name_key = f"add_address_name_{project.project_id}"
+            address_key = f"add_address_value_{project.project_id}"
+            category_key = f"add_address_category_{project.project_id}"
+            specific_use_key = f"add_address_specific_use_{project.project_id}"
+
+            if category_key not in st.session_state:
+                st.session_state[category_key] = category_options()[0]
+
+            current_category = st.session_state[category_key]
+            current_specific_options = specific_use_options(current_category)
+            if (
+                specific_use_key not in st.session_state
+                or st.session_state[specific_use_key] not in current_specific_options
+            ):
+                st.session_state[specific_use_key] = current_specific_options[0]
+
+            col1, col2 = st.columns(2)
+            with col1:
+                name = st.text_input("Name", key=name_key)
+                address = st.text_input("Address", key=address_key)
+            with col2:
+                category = st.selectbox(
+                    "Use Category",
+                    category_options(),
+                    key=category_key,
+                )
+                specific_use = st.selectbox(
+                    "Specific Use",
+                    specific_use_options(category),
+                    key=specific_use_key,
+                )
+
+            action_col1, action_col2 = st.columns(2)
+            with action_col1:
+                submit_btn = st.button("Add Address", use_container_width=True, type="primary")
+            with action_col2:
+                cancel_btn = st.button("Cancel", use_container_width=True)
+
+            if cancel_btn:
+                st.session_state.show_add_form = False
+                st.rerun()
+
+            if submit_btn and name and address:
+                try:
+                    analyzer = RouteAnalyzer(
+                        origin=(project.origin_lat, project.origin_lon)
                     )
-                
-                submit_btn = st.form_submit_button("Add Address", use_container_width=True)
-                
-                if submit_btn and name and address:
-                    try:
-                        analyzer = RouteAnalyzer(
-                            origin=(project.origin_lat, project.origin_lon)
-                        )
-                        dest = analyzer.analyze_destination(
-                            name=name,
-                            address=address,
-                            max_distance_m=project.max_distance_m
-                        )
-                        dest.category = category
-                        dest.specific_use = specific_use
-                        dest_dict = destination_to_dict(dest)
-                        project_manager.add_destination(project.project_id, dest_dict)
-                        st.session_state.show_add_form = False
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Error adding address: {e}")
+                    dest = analyzer.analyze_destination(
+                        name=name,
+                        address=address,
+                        max_distance_m=project.max_distance_m
+                    )
+                    dest.category = category
+                    dest.specific_use = specific_use
+                    dest_dict = destination_to_dict(dest)
+                    project_manager.add_destination(project.project_id, dest_dict)
+
+                    st.session_state[name_key] = ""
+                    st.session_state[address_key] = ""
+                    st.session_state[category_key] = category_options()[0]
+                    st.session_state[specific_use_key] = specific_use_options(
+                        st.session_state[category_key]
+                    )[0]
+                    st.session_state.show_add_form = False
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error adding address: {e}")
             
             st.markdown("---")
         
