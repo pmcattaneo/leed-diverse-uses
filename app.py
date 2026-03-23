@@ -801,6 +801,13 @@ def page_project():
             address_key = f"add_address_value_{project.project_id}"
             category_key = f"add_address_category_{project.project_id}"
             specific_use_key = f"add_address_specific_use_{project.project_id}"
+            reset_form_key = f"reset_add_address_form_{project.project_id}"
+
+            if st.session_state.pop(reset_form_key, False):
+                st.session_state.pop(name_key, None)
+                st.session_state.pop(address_key, None)
+                st.session_state.pop(category_key, None)
+                st.session_state.pop(specific_use_key, None)
 
             if category_key not in st.session_state:
                 st.session_state[category_key] = category_options()[0]
@@ -854,12 +861,7 @@ def page_project():
                     dest_dict = destination_to_dict(dest)
                     project_manager.add_destination(project.project_id, dest_dict)
 
-                    st.session_state[name_key] = ""
-                    st.session_state[address_key] = ""
-                    st.session_state[category_key] = category_options()[0]
-                    st.session_state[specific_use_key] = specific_use_options(
-                        st.session_state[category_key]
-                    )[0]
+                    st.session_state[reset_form_key] = True
                     st.session_state.show_add_form = False
                     st.rerun()
                 except Exception as e:
