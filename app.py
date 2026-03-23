@@ -113,6 +113,33 @@ def clear_destination_route(
     return cleared
 
 
+def destination_edit_state_key(project_id: str) -> str:
+    """Return the session-state key for the currently edited destination."""
+    return f"edit_destination_index_{project_id}"
+
+
+def start_destination_edit(project, destination_index: int) -> None:
+    """Seed session state for editing an existing destination."""
+    dest = destination_from_dict(project.destinations[destination_index])
+    state_key = destination_edit_state_key(project.project_id)
+    st.session_state[state_key] = destination_index
+    st.session_state[f"edit_address_name_{project.project_id}"] = dest.name
+    st.session_state[f"edit_address_value_{project.project_id}"] = dest.address
+    st.session_state[f"edit_address_category_{project.project_id}"] = dest.category
+
+    edit_specific_key = f"edit_address_specific_use_{project.project_id}"
+    category_specific_options = specific_use_options(dest.category)
+    if dest.specific_use in category_specific_options:
+        st.session_state[edit_specific_key] = dest.specific_use
+    else:
+        st.session_state[edit_specific_key] = category_specific_options[0]
+
+
+def stop_destination_edit(project_id: str) -> None:
+    """Clear the active destination edit state for a project."""
+    st.session_state.pop(destination_edit_state_key(project_id), None)
+
+
 def destination_map_signature(dest: Destination) -> str:
     """Create a stable signature for a destination map extent."""
     geometry_count = len(dest.route_geometry or [])
@@ -895,6 +922,127 @@ def page_project():
             
             df = pd.DataFrame(df_data)
             st.dataframe(df, use_container_width=True, hide_index=True)
+            st.caption("Manage saved addresses below.")
+
+            edit_index = st.session_state.get(destination_edit_state_key(project.project_id))
+            if edit_index is not None and edit_index >= len(project.destinations):
+                stop_destination_edit(project.project_id)
+                edit_index = None
+
+            for idx, dest_dict in enumerate(project.destinations):
+                normalized_dest = destination_from_dict(dest_dict)
+                summary_col, edit_col, delete_col = st.columns([8, 1, 1])
+
+                with summary_col:
+                    st.markdown(
+                        f"**{normalized_dest.name}**  \n"
+                        f"{normalized_dest.category} | {normalized_dest.specific_use or '—'}  \n"
+                        f"{normalized_dest.address}"
+                    )
+
+                with edit_col:
+                    if st.button("✏️", key=f"edit_dest_{project.project_id}_{idx}", use_container_width=True):
+                        start_destination_edit(project, idx)
+                        st.rerun()
+
+                with delete_col:
+                    if st.button("🗑️", key=f"delete_dest_{project.project_id}_{idx}", use_container_width=True):
+                        project_manager.remove_destination(project.project_id, idx)
+
+                        active_edit_index = st.session_state.get(
+                            destination_edit_state_key(project.project_id)
+                        )
+                        if active_edit_index == idx:
+                            stop_destination_edit(project.project_id)
+                        elif active_edit_index is not None and active_edit_index > idx:
+                            st.session_state[destination_edit_state_key(project.project_id)] = (
+                                active_edit_index - 1
+                            )
+
+                        st.rerun()
+
+                if edit_index == idx:
+                    edit_name_key = f"edit_address_name_{project.project_id}"
+                    edit_address_key = f"edit_address_value_{project.project_id}"
+                    edit_category_key = f"edit_address_category_{project.project_id}"
+                    edit_specific_use_key = f"edit_address_specific_use_{project.project_id}"
+
+                    if edit_category_key not in st.session_state:
+                        st.session_state[edit_category_key] = normalized_dest.category
+
+                    current_edit_category = st.session_state[edit_category_key]
+                    current_edit_specific_options = specific_use_options(current_edit_category)
+                    if (
+                        edit_specific_use_key not in st.session_state
+                        or st.session_state[edit_specific_use_key] not in current_edit_specific_options
+                    ):
+                        st.session_state[edit_specific_use_key] = current_edit_specific_options[0]
+
+                    st.markdown("#### Edit Address")
+                    edit_col1, edit_col2 = st.columns(2)
+                    with edit_col1:
+                        edited_name = st.text_input("Name", key=edit_name_key)
+                        edited_address = st.text_input("Address", key=edit_address_key)
+                    with edit_col2:
+                        edited_category = st.selectbox(
+                            "Use Category",
+                            category_options(),
+                            key=edit_category_key,
+                        )
+                        edited_specific_use = st.selectbox(
+                            "Specific Use",
+                            specific_use_options(edited_category),
+                            key=edit_specific_use_key,
+                        )
+
+                    save_col, cancel_col = st.columns(2)
+                    with save_col:
+                        save_edit = st.button(
+                            "Save Changes",
+                            key=f"save_dest_{project.project_id}_{idx}",
+                            use_container_width=True,
+                            type="primary",
+                        )
+                    with cancel_col:
+                        cancel_edit = st.button(
+                            "Cancel Edit",
+                            key=f"cancel_dest_{project.project_id}_{idx}",
+                            use_container_width=True,
+                        )
+
+                    if cancel_edit:
+                        stop_destination_edit(project.project_id)
+                        st.rerun()
+
+                    if save_edit and edited_name and edited_address:
+                        try:
+                            address_changed = edited_address.strip() != normalized_dest.address.strip()
+
+                            if address_changed:
+                                analyzer = RouteAnalyzer(
+                                    origin=(project.origin_lat, project.origin_lon)
+                                )
+                                updated_dest = analyzer.analyze_destination(
+                                    name=edited_name,
+                                    address=edited_address,
+                                    max_distance_m=project.max_distance_m,
+                                )
+                            else:
+                                updated_dest = destination_from_dict(dest_dict)
+                                updated_dest.name = edited_name
+                                updated_dest.address = edited_address
+
+                            updated_dest.name = edited_name
+                            updated_dest.category = edited_category
+                            updated_dest.specific_use = edited_specific_use
+                            project.destinations[idx] = destination_to_dict(updated_dest)
+                            project_manager.update_project(project)
+                            stop_destination_edit(project.project_id)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error updating address: {e}")
+
+                st.markdown("---")
             
             # Compliance summary
             compliant_count = project.compliant_count
